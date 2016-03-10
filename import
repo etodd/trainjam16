@@ -1,0 +1,6 @@
+#!/bin/bash
+
+for f in game/geom/*.obj
+do
+	python convert_obj_three.py -i $f -o ${f%.*}.js
+done
