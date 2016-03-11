@@ -9,7 +9,22 @@ var con =
 	light_tip_time: 0.25,
 	light_cell_size: 3,
 	monster_normal_speed: 2,
+	monster_chase_speed: 4,
+	monster_detect_radius: 5,
+	monster_chase_radius: 9,
+	monster_damage_radius: 3,
+	monster_attack_radius: 1.5,
+	monster_attack_delay: 0.75,
+	monster_alert_radius: 16,
+	msg_time: 3,
 	glare_color: new THREE.Color(1, 1, 0.7),
+	level_names:
+	[
+		'HAUNTED HEIST!!',
+		'FOYER',
+		'HALLWAY',
+		'LIVING ROOM',
+	],
 	collision_directions:
 	{
 		right: new THREE.Vector2(0.5, 0),
@@ -49,7 +64,8 @@ var con =
 		normal: 0,
 		chase: 1,
 		attack: 2,
-		hide: 3,
+		alert: 3,
+		hide: 4,
 	},
 	codes:
 	{
@@ -78,6 +94,7 @@ var state =
 	monsters: [],
 	player:
 	{
+		alive: false,
 		pos: new THREE.Vector2(),
 		coins: [],
 		light: 1,
@@ -86,6 +103,7 @@ var state =
 
 var graphics =
 {
+	ui: null,
 	texture_loader: new THREE.TextureLoader(),
 	model_loader: new THREE.JSONLoader(),
 	door_text:
@@ -94,6 +112,8 @@ var graphics =
 		door_coins: 0,
 		mesh: null,
 	},
+	msg: null,
+	msg_timer: 0,
 	scene: null,
 	camera: null,
 	renderer: null,
@@ -108,7 +128,13 @@ var graphics =
 	ground: null,
 	player: null,
 	player_light: null,
-	levels: [],
+	level:
+	{
+		0: null,
+		1: null,
+		2: null,
+		3: null,
+	},
 	geom:
 	{
 		light: null,
@@ -131,6 +157,7 @@ var global =
 	clock: new THREE.Clock(),
 	mouse: new THREE.Vector2(),
 	mouse_down: false,
+	last_mouse_down: false,
 };
 
 // three.js extensions
@@ -191,6 +218,25 @@ THREE.FloorGeometry.prototype.constructor = THREE.FloorGeometry;
 
 var func = {};
 
+func.msg = function(msg)
+{
+	graphics.msg_timer = state.level === 0 ? 0 : con.msg_time;
+	if (graphics.msg)
+		graphics.ui.remove(graphics.msg);
+	if (msg)
+	{
+		graphics.msg = func.create_text(msg, 2.0, graphics.ui);
+		graphics.msg.material = new THREE.ShaderMaterial(
+		{
+			vertexShader: document.getElementById('vertex_shader_unlit').textContent,
+			fragmentShader: document.getElementById('fragment_shader_unlit').textContent,
+		});
+		graphics.msg.position.y = -2.0;
+	}
+	else
+		graphics.msg = null;
+};
+
 func.init = function()
 {
 	global.clock.start();
@@ -211,6 +257,10 @@ func.init = function()
 	graphics.camera.rotation.y = Math.PI * 0.08;
 	graphics.camera.rotation.z = Math.PI * 0.08;
 	con.camera_offset = graphics.camera.getWorldDirection().multiplyScalar(-con.camera_size);
+
+	graphics.ui = new THREE.Object3D();
+	graphics.ui.quaternion.setFromEuler(graphics.camera.rotation);
+	graphics.scene.add(graphics.ui);
 
 	graphics.renderer = new THREE.WebGLRenderer({ antialias: true });
 	graphics.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -251,6 +301,21 @@ func.init = function()
 		);
 	}
 
+	for (var level_name in graphics.level)
+	{
+		let local_level_name = level_name;
+		graphics.texture_loader.load
+		(
+			'lvl/' + level_name + '.png',
+			function(texture)
+			{
+				graphics.level[local_level_name] = texture;
+				func.check_done_loading();
+			},
+			func.error
+		);
+	}
+
 	new THREE.FontLoader().load('helvetiker_bold.typeface.js', function (response)
 	{
 		graphics.font = response;
@@ -272,6 +337,12 @@ func.check_done_loading = function()
 	for (var name in graphics.texture)
 	{
 		if (!graphics.texture[name])
+			return false;
+	}
+
+	for (var name in graphics.level)
+	{
+		if (!graphics.level[name])
 			return false;
 	}
 
@@ -337,13 +408,13 @@ func.on_mouseup = function(event)
 	event.preventDefault();
 };
 
-func.create_value_text = function(value, parent)
+func.create_text = function(value, size, parent)
 {
-	var scale = value.length === 1 ? 1.0 : 1.5 / value.length;
+	var scale = value.length === 1 ? 1.0 : 1.0 / Math.sqrt(value.length);
 	var text_geometry = new THREE.TextGeometry(value,
 	{
-		size: 1.0 * scale,
-		height: 0.1,
+		size: size * scale,
+		height: 0,
 		curveSegments: 2,
 
 		font: graphics.font,
@@ -359,7 +430,6 @@ func.create_value_text = function(value, parent)
 	});
 	var text = func.add_mesh(text_geometry, 0xff0000, null, parent);
 	text_geometry.computeBoundingBox();
-	text.position.z = 1.05;
 	text.position.x = -0.05 - 0.5 * (text_geometry.boundingBox.max.x - text_geometry.boundingBox.min.x);
 	text.position.y = -0.5 * (text_geometry.boundingBox.max.y - text_geometry.boundingBox.min.y);
 	return text;
@@ -369,7 +439,13 @@ func.refresh_door_text = function()
 {
 	if (graphics.door_text.mesh)
 		graphics.door.remove(graphics.door_text.mesh);
-	graphics.door_text.mesh = func.create_value_text(state.bank_coins + ' / ' + state.door_coins, graphics.door);
+	if (state.door_coins > 0)
+	{
+		var text = func.create_text(state.bank_coins + ' / ' + state.door_coins, 1.0, graphics.door);
+		text.position.z = 1.05;
+		graphics.door_text.mesh = text;
+	}
+
 	graphics.door_text.bank_coins = state.bank_coins;
 	graphics.door_text.door_coins = state.door_coins;
 };
@@ -383,6 +459,7 @@ func.load_level = function(level)
 	state.coins.length = 0;
 	state.bank_coins = 0;
 	state.light_models.length = 0;
+	state.monsters.length = 0;
 
 	graphics.light_models.length = 0;
 	graphics.monsters.length = 0;
@@ -402,23 +479,9 @@ func.load_level = function(level)
 
 	// load new stuff
 	state.level = level;
+	state.player.alive = state.level > 0;
 
-	if (graphics.levels[state.level])
-		func.parse_level_texture(graphics.levels[state.level]);
-	else
-	{
-		graphics.texture_loader.load
-		(
-			'lvl/' + state.level + '.png',
-			func.parse_level_texture,
-			func.error
-		);
-	}
-};
-
-func.parse_level_texture = function(texture)
-{
-	graphics.levels[state.level] = texture;
+	var texture = graphics.level[state.level];
 
 	state.size.x = texture.image.width;
 	state.size.y = texture.image.height;
@@ -500,7 +563,8 @@ func.parse_level_texture = function(texture)
 					pos: pos.clone(),
 					path: [],
 					state: con.monster_states.normal,
-					timer: 0,
+					timer: 0, // used for interval stuff like recalculating paths every x seconds
+					timer2: 0, // used for accumulative stuff, like a vision timer before the monster is alerted
 				});
 
 				var monster = func.add_mesh(graphics.geom.monster, 0x000000);
@@ -545,8 +609,13 @@ func.parse_level_texture = function(texture)
 	graphics.ground = func.add_mesh(new THREE.FloorGeometry(state.size.x, state.size.y), 0xffddcc);
 	graphics.ground.material.map = graphics.texture.floor;
 	
-	graphics.camera_pos_target.copy(state.player.pos);
+	if (state.player.alive)
+		graphics.camera_pos_target.copy(state.player.pos);
+	else
+		graphics.camera_pos_target.set(state.size.x * 0.5, 0);
 	graphics.camera_pos.copy(graphics.camera_pos_target);
+	
+	func.msg(con.level_names[state.level]);
 };
 
 func.coord = function(pos)
@@ -565,13 +634,12 @@ func.random_goal = function(start, radius)
 	var visited = {};
 
 	var queue = [];
-	queue.push(start);
+	queue.push(func.coord(start));
 
 	while (queue.length > 0)
 	{
 		var coord = queue.pop(0);
 		visited[func.cell_hash(coord)] = true;
-		points.push(coord);
 		
 		for (var dir_name in con.directions)
 		{
@@ -581,7 +649,10 @@ func.random_goal = function(start, radius)
 			{
 				var hash = func.cell_hash(adjacent);
 				if (!visited[hash] && state.grid[adjacent.x][adjacent.y].mask === 0)
+				{
 					queue.push(adjacent);
+					points.push(adjacent);
+				}
 			}
 		}
 	}
@@ -590,6 +661,8 @@ func.random_goal = function(start, radius)
 
 func.astar = function(start, end, path)
 {
+	start = func.coord(start);
+
 	path.length = 0;
 
 	var queue = [];
@@ -603,7 +676,7 @@ func.astar = function(start, end, path)
 	travel_scores[start_hash] = 0;
 	estimate_scores[start_hash] = end.clone().sub(start).length();
 
-	var end_hash = func.cell_hash(end);
+	var end_hash = func.cell_hash(func.coord(end));
 
 	var priority_sort = function(a, b)
 	{
@@ -632,16 +705,19 @@ func.astar = function(start, end, path)
 				if (hash === end_hash)
 				{
 					// reconstruct path
-					parents[hash] = coord;
-					var current = adjacent;
+					path.push(end);
+					var current = coord;
 					while (current)
 					{
 						path.splice(0, 0, current);
 						current = parents[func.cell_hash(current)];
 					}
 
+					// remove start point; we're already there
+					path.splice(0, 1);
+
 					// simplify path
-					for (var i = 1; i < path.length - 1; i++)
+					for (var i = 0; i < path.length - 1; i++)
 					{
 						var coord = path[i];
 						var adjacent_obstacle = false;
@@ -971,6 +1047,15 @@ func.monster_move = function(monster, speed, dt)
 	}
 };
 
+func.monster_check_attack = function(monster)
+{
+	if (state.player.alive && monster.pos.clone().sub(state.player.pos).length() < con.monster_attack_radius)
+	{
+		monster.state = con.monster_states.attack;
+		monster.timer = con.monster_attack_delay;
+	}
+};
+
 func.update = function()
 {
 	requestAnimationFrame(func.update);
@@ -979,7 +1064,7 @@ func.update = function()
 
 	// player
 	var player_velocity = new THREE.Vector2();
-	if (state.grid && global.mouse_down)
+	if (state.grid && state.player.alive && global.mouse_down)
 	{
 		var view_proj = graphics.camera.projectionMatrix.clone();
 		view_proj.multiply(graphics.camera.matrixWorldInverse);
@@ -1120,18 +1205,107 @@ func.update = function()
 		var graphic = graphics.monsters[i];
 		switch (monster.state)
 		{
-			case con.monster_states.normal:
+			case con.monster_states.normal: // wandering
 				if (monster.path.length === 0)
 				{
 					monster.timer -= dt;
 					if (monster.timer < 0.0)
 					{
-						var coord = func.coord(monster.pos);
-						func.astar(coord, func.random_goal(coord, 10), monster.path);
+						func.astar(monster.pos, func.random_goal(monster.pos, 10), monster.path);
 						monster.timer = 0.5 + Math.random() * 3.0;
 					}
 				}
 				func.monster_move(monster, con.monster_normal_speed, dt);
+
+				if (state.player.alive)
+				{
+					if (state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
+						monster.timer2 += dt;
+					else
+						monster.timer2 = 0;
+					if (monster.timer2 > 1.0)
+					{
+						monster.state = con.monster_states.chase;
+						monster.timer = 0;
+					}
+				}
+				else
+					monster.timer2 = 0;
+
+				func.monster_check_attack(monster);
+				break;
+			case con.monster_states.chase: // chasing the player
+				monster.timer -= dt;
+				if (monster.timer < 0 || monster.path.length === 0)
+				{
+					monster.timer = 0.5;
+					if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_chase_radius)
+						func.astar(monster.pos, state.player.pos, monster.path); // update path
+					else if (monster.path.length === 0)
+					{
+						// followed path, can't find them
+						monster.state = con.monster_states.normal;
+						monster.timer = 3.0;
+					}
+				}
+				func.monster_move(monster, con.monster_chase_speed, dt);
+				func.monster_check_attack(monster);
+				break;
+			case con.monster_states.attack: // attacking the player
+				monster.timer -= dt;
+				if (monster.timer < 0)
+				{
+					if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_damage_radius)
+					{
+						// hit; do damage
+						if (state.player.coins.length > 0)
+						{
+							// take coins
+							state.player.coins.length = 0; // todo: coin animation
+							monster.state = con.monster_states.chase;
+							monster.timer = 0;
+						}
+						else
+						{
+							// they're dead
+							state.player.alive = false;
+							func.msg('YOU DIED');
+							monster.state = con.monster_states.normal;
+							monster.timer = 3.0;
+						}
+					}
+					else
+					{
+						// missed; keep chasing
+						monster.state = con.monster_states.chase;
+						monster.timer = 0.0;
+					}
+				}
+				break;
+			case con.monster_states.alert: // checking out a noise
+				if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
+				{
+					monster.state = con.monster_states.chase;
+					monster.timer = 0;
+				}
+
+				if (monster.path.length === 0)
+				{
+					monster.state = con.monster_states.normal;
+					monster.timer = 3.0;
+				}
+				func.monster_move(monster, con.monster_chase_speed, dt);
+				func.monster_check_attack(monster);
+				break;
+			case con.monster_states.hide: // hiding from the player
+				if (monster.path.length === 0)
+				{
+					// done hiding
+					monster.state = con.monster_states.normal;
+					monster.timer = 3.0;
+				}
+				else
+					func.monster_move(monster, con.monster_chase_speed, dt);
 				break;
 		}
 		graphic.position.set(monster.pos.x, monster.pos.y, 0);
@@ -1182,12 +1356,31 @@ func.update = function()
 				point_light.color.set(0, 0, 0);
 				var glares = graphic.children[0];
 				graphic.remove(glares);
+
+				// alert any monsters nearby
+				for (var j = 0; j < state.monsters.length; j++)
+				{
+					var monster = state.monsters[j];
+					if (monster.state === con.monster_states.normal
+						&& monster.pos.clone().sub(light_model.pos).length() < con.monster_alert_radius)
+					{
+						var path = [];
+						func.astar(monster.pos, func.random_goal(light_model.pos, 2), path);
+						if (path.length > 0)
+						{
+							monster.state = con.monster_states.alert;
+							monster.path = path;
+						}
+					}
+				}
 			}
 		}
 	}
 
 	// camera
-	graphics.camera_pos_target.copy(state.player.pos);
+	if (state.player.alive)
+		graphics.camera_pos_target.copy(state.player.pos);
+
 	graphics.camera_pos.lerp(graphics.camera_pos_target, dt * 10.0);
 	graphics.camera.position.set(graphics.camera_pos.x, graphics.camera_pos.y, 0).add(con.camera_offset);
 	func.update_projection();
@@ -1195,6 +1388,31 @@ func.update = function()
 	// lights
 	for (var i = 0; i < graphics.flicker_lights.length; i++)
 		func.flicker_light(graphics.flicker_lights[i], i);
+	
+	// ui
+	graphics.ui.position.copy(graphics.camera.position).add(con.camera_offset.clone().multiplyScalar(-0.1));
+	if (graphics.msg_timer > 0)
+	{
+		graphics.msg_timer -= dt;
+		if (state.player.alive && graphics.msg_timer <= 0)
+		{
+			graphics.ui.remove(graphics.msg);
+			graphics.msg = null;
+		}
+	}
+	else if (!state.player.alive && global.mouse_down && !global.last_mouse_down)
+	{
+		// player is dead, msg timer is up, and player is clicking
+		// time to transition levels
+		if (state.level === 0)
+			func.load_level(1); // start the game
+		else
+			func.load_level(0); // go back to start
+	}
+
+	graphics.player.visible = state.player.alive;
+
+	global.last_mouse_down = global.mouse_down;
 
 	// render
 	graphics.renderer.render(graphics.scene, graphics.camera);
