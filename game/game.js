@@ -5,12 +5,22 @@ var con =
 {
 	camera_offset: new THREE.Vector3(),
 	camera_size: 15.0,
-	directions:
+	coin_flip_time: 0.5,
+	light_tip_time: 0.25,
+	light_cell_size: 3,
+	collision_directions:
 	{
 		right: new THREE.Vector2(0.5, 0),
 		left: new THREE.Vector2(-0.5, 0),
 		forward: new THREE.Vector2(0, 0.5),
 		backward: new THREE.Vector2(0, -0.5),
+	},
+	directions:
+	{
+		right: 0,
+		left: 1,
+		forward: 2,
+		backward: 3,
 	},
 	max_capacity: 4,
 	masks:
@@ -42,10 +52,11 @@ var state =
 	door_coins: 1,
 	bank_coins: 0,
 	coins: [],
+	light_models: [],
 	player:
 	{
 		pos: new THREE.Vector2(),
-		coins: 0,
+		coins: [],
 		light: 1,
 	},
 };
@@ -59,6 +70,7 @@ var graphics =
 	renderer: null,
 	scenery: [],
 	flicker_lights: [],
+	light_models: [],
 	coins: [],
 	player_coins: [],
 	camera_pos: new THREE.Vector2(),
@@ -312,11 +324,13 @@ func.create_value_text = function(value, parent)
 func.load_level = function(level)
 {
 	// unload old stuff
-	state.player.coins = 0;
+	state.player.coins.length = 0;
 	state.player.light = 1;
 	state.grid = null;
 	state.coins.length = 0;
 	state.bank_coins = 0;
+
+	graphics.light_models.length = 0;
 
 	if (graphics.ground)
 	{
@@ -377,7 +391,11 @@ func.parse_level_texture = function(texture)
 	{
 		for (var y = 0; y < state.size.y; y++)
 		{
-			var grid_value = 0;
+			var grid_value =
+			{
+				mask: 0,
+				id: 0,
+			};
 			var offset = (x + (((state.size.y - 1) - y) * state.size.x)) * 4;
 			pos.set(x + 0.5, y + 0.5);
 			if (pixel_equals(offset, con.codes.wall))
@@ -386,18 +404,30 @@ func.parse_level_texture = function(texture)
 				wall.material.map = graphics.texture.wall;
 				graphics.scenery.push(wall);
 				wall.position.set(pos.x, pos.y, 0);
-				grid_value = con.masks.wall;
+				grid_value.mask = con.masks.wall;
 			}
 			else if (pixel_equals(offset, con.codes.light))
 			{
+				state.light_models.push(
+				{
+					pos: pos.clone(),
+					on: true,
+					anim_time: con.light_tip_time,
+					anim_dir: 0,
+				});
+				grid_value.mask = con.masks.light;
+				grid_value.id = state.light_models.length - 1;
+
 				var light = func.add_mesh(graphics.geom.light, 0xcccc44);
 				graphics.scenery.push(light);
 				light.position.set(pos.x, pos.y, 0);
+				graphics.light_models.push(light);
 
 				var point_light = new THREE.PointLight(0xdd9977, 1, 5);
 				point_light.position.set(0, 0, 3.0);
+				graphics.flicker_lights.push(point_light);
 				light.add(point_light);
-				grid_value = con.masks.light;
+
 			}
 			else if (pixel_equals(offset, con.codes.player))
 				state.player.pos.copy(pos);
@@ -415,10 +445,16 @@ func.parse_level_texture = function(texture)
 				var point_light = new THREE.PointLight(0xffffff, 1, 5);
 				point_light.position.set(0, 0, 3.0);
 				door.add(point_light);
-				grid_value = con.masks.door;
+				grid_value.mask = con.masks.door;
 			}
 			else if (pixel_equals(offset, con.codes.coin))
-				state.coins.push(pos.clone());
+			{
+				state.coins.push(
+				{
+					pos: pos.clone(),
+					anim_time: con.coin_flip_time,
+				});
+			}
 			state.grid[x][y] = grid_value;
 		}
 	}
@@ -496,12 +532,35 @@ func.closest_corner = function(pos, x, y)
 	};
 };
 
+func.move_dir = function(pos, dir)
+{
+	switch (dir)
+	{
+		case con.directions.right:
+			pos.x += 1;
+			break;
+		case con.directions.left:
+			pos.x -= 1;
+			break;
+		case con.directions.forward:
+			pos.y += 1;
+			break;
+		case con.directions.backward:
+			pos.y -= 1;
+			break;
+	}
+};
+
 func.move_body = function(position, velocity, dt, speed_max, mask)
 {
 	if (typeof speed_max === 'undefined')
 		speed_max = con.speed_max;
 	if (typeof mask === 'undefined')
 		mask = 0xffffff;
+	
+	var movement = velocity.clone();
+	movement.multiplyScalar(dt);
+	position.add(movement);
 
 	var collided_mask = 0;
 
@@ -520,34 +579,45 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 		{
 			for (var y = coord_y - 1; y < coord_y + 2; y++)
 			{
+				var cell = state.grid[x][y];
 				if (x >= 0 && x < state.size.x
 					&& y >= 0 && y < state.size.y
-					&& (state.grid[x][y] & mask))
+					&& (cell.mask & mask))
 				{
 					// first check cardinal directions
-					if (func.collides(position.clone().add(con.directions.right), x, y))
+					var collision_dir;
+					var collision = false;
+					if (func.collides(position.clone().add(con.collision_directions.right), x, y))
 					{
 						position.x = x - 0.5;
 						velocity.x = Math.min(velocity.x, 0);
-						collided_mask |= state.grid[x][y];
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.right;
 					}
-					else if (func.collides(position.clone().add(con.directions.left), x, y))
+					else if (func.collides(position.clone().add(con.collision_directions.left), x, y))
 					{
 						position.x = x + 1.5;
 						velocity.x = Math.max(velocity.x, 0);
-						collided_mask |= state.grid[x][y];
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.left;
 					}
-					else if (func.collides(position.clone().add(con.directions.forward), x, y))
+					else if (func.collides(position.clone().add(con.collision_directions.forward), x, y))
 					{
 						position.y = y - 0.5;
 						velocity.y = Math.min(velocity.y, 0);
-						collided_mask |= state.grid[x][y];
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.forward;
 					}
-					else if (func.collides(position.clone().add(con.directions.backward), x, y))
+					else if (func.collides(position.clone().add(con.collision_directions.backward), x, y))
 					{
 						position.y = y + 1.5;
 						velocity.y = Math.max(velocity.y, 0);
-						collided_mask |= state.grid[x][y];
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.backward;
 					}
 					else
 					{
@@ -565,7 +635,48 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 							corner_to_body_normalized.multiplyScalar(penetration_velocity);
 							velocity.add(corner_to_body_normalized);
 
-							collided_mask |= state.grid[x][y];
+							collided_mask |= cell.mask;
+						}
+					}
+
+					if (collision && (cell.mask & con.masks.light))
+					{
+						var light_model = state.light_models[cell.id];
+						if (light_model.on)
+						{
+							// light takes up more cells now
+							// first make sure nothing is in the way
+							var new_cell_coord = new THREE.Vector2(x, y);
+							var conflict = false;
+							for (var j = 0; j < con.light_cell_size - 1; j++)
+							{
+								func.move_dir(new_cell_coord, collision_dir);
+								if (new_cell_coord.x < 0 || new_cell_coord.x >= state.size.x
+									|| new_cell_coord.y < 0 || new_cell_coord.y >= state.size.y
+									|| state.grid[new_cell_coord.x][new_cell_coord.y].mask !== 0)
+								{
+									conflict = true;
+									break;
+								}
+							}
+
+							if (!conflict)
+							{
+								// knock it over
+								new_cell_coord.set(x, y);
+								for (var j = 0; j < con.light_cell_size - 1; j++)
+								{
+									func.move_dir(new_cell_coord, collision_dir);
+
+									var new_cell = state.grid[new_cell_coord.x][new_cell_coord.y];
+									new_cell.mask = con.masks.light;
+									new_cell.id = cell.id;
+								}
+
+								light_model.on = false;
+								light_model.anim_time = 0;
+								light_model.anim_dir = collision_dir;
+							}
 						}
 					}
 				}
@@ -591,18 +702,6 @@ func.update = function()
 	var dt = global.clock.getDelta();
 
 	// player
-	graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
-	state.player.light = Math.max(0, state.player.light + dt * -0.0035);
-	func.flicker_light(graphics.player_light, 0, state.player.light);
-
-	if (Math.floor(state.player.pos.x) === state.door.x
-		&& Math.floor(state.player.pos.y) === state.door.y
-		&& state.bank_coins >= state.door_coins)
-	{
-		state.level++;
-		func.load_level(state.level);
-	}
-
 	var player_velocity = new THREE.Vector2();
 	if (state.grid && global.mouse_down)
 	{
@@ -631,7 +730,8 @@ func.update = function()
 		var target_y = ray_start.y + (ray_end.y - ray_start.y) * d;
 
 		player_velocity.set(target_x - state.player.pos.x, target_y - state.player.pos.y);
-		var coin_multiplier = 0.5 + (0.5 * (con.max_capacity - state.player.coins) / con.max_capacity);
+		graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
+		var coin_multiplier = 0.5 + (0.5 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
 		player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
 		var mask;
 		if (state.bank_coins < state.door_coins)
@@ -641,10 +741,22 @@ func.update = function()
 		var collided_mask = func.move_body(state.player.pos, player_velocity, dt, con.speed_max * coin_multiplier, mask);
 		if (collided_mask & con.masks.door)
 		{
-			state.bank_coins += state.player.coins;
-			state.player.coins = 0;
+			state.bank_coins += state.player.coins.length;
+			state.player.coins.length = 0;
+		}
+
+		if (Math.floor(state.player.pos.x) === state.door.x
+			&& Math.floor(state.player.pos.y) === state.door.y
+			&& state.bank_coins >= state.door_coins)
+		{
+			state.level++;
+			func.load_level(state.level);
 		}
 	}
+
+	graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
+	state.player.light = Math.max(0, state.player.light + dt * -0.0035);
+	func.flicker_light(graphics.player_light, 0, state.player.light);
 
 	// coins
 	while (graphics.coins.length < state.coins.length)
@@ -652,12 +764,16 @@ func.update = function()
 	for (var i = 0; i < state.coins.length; i++)
 	{
 		var coin = state.coins[i];
-		var diff = coin.clone().sub(state.player.pos);
+		var diff = coin.pos.clone().sub(state.player.pos);
 		if (diff.length() < 1)
 		{
-			if (state.player.coins < con.max_capacity)
+			if (state.player.coins.length < con.max_capacity)
 			{
-				state.player.coins++;
+				state.player.coins.push(
+				{
+					pos: coin.pos,
+					anim_time: 0,
+				});
 				state.coins.splice(i, 1);
 				i--;
 			}
@@ -670,13 +786,13 @@ func.update = function()
 				if (dot > 0.0)
 				{
 					coin_velocity.multiplyScalar(dot);
-					func.move_body(coin, coin_velocity, dt);
-					graphics.coins[i].position.set(coin.x, coin.y, 0);
+					func.move_body(coin.pos, coin_velocity, dt);
+					graphics.coins[i].position.set(coin.pos.x, coin.pos.y, 0);
 				}
 			}
 		}
 		else
-			graphics.coins[i].position.set(coin.x, coin.y, 0);
+			graphics.coins[i].position.set(coin.pos.x, coin.pos.y, 0);
 	}
 	while (graphics.coins.length > state.coins.length)
 	{
@@ -685,16 +801,70 @@ func.update = function()
 	}
 
 	// player coins
-	while (graphics.player_coins.length < state.player.coins)
+	while (graphics.player_coins.length < state.player.coins.length)
 	{
-		var coin = func.add_mesh(graphics.geom.coin, 0xffff00, null, graphics.player);
-		coin.position.z = 1 + graphics.player_coins.length * 0.3;
+		var coin = func.add_mesh(graphics.geom.coin, 0xffff00);
 		graphics.player_coins.push(coin);
 	}
-	while (graphics.player_coins.length > state.player.coins)
+	var coin_end_pos = new THREE.Vector3();
+	for (var i = 0; i < state.player.coins.length; i++)
 	{
-		graphics.player.remove(graphics.player_coins[graphics.player_coins.length - 1]);
+		var coin = state.player.coins[i];
+		var graphic = graphics.player_coins[i];
+		coin_end_pos.set(state.player.pos.x, state.player.pos.y, 1 + i * 0.3);
+		if (coin.anim_time < con.coin_flip_time)
+		{
+			coin.anim_time += dt;
+			var blend = coin.anim_time / con.coin_flip_time;
+			graphic.position.set(coin.pos.x, coin.pos.y, 0);
+			graphic.position.lerp(coin_end_pos, blend);
+			graphic.position.z += Math.sin(blend * Math.PI) * 2.0;
+			graphic.rotation.set((1.0 - blend) * Math.PI * 4.0, 0, 0);
+		}
+		else
+		{
+			graphic.position.copy(coin_end_pos);
+			graphic.rotation.set(0, 0, 0);
+		}
+	}
+	while (graphics.player_coins.length > state.player.coins.length)
+	{
+		graphics.scene.remove(graphics.player_coins[graphics.player_coins.length - 1]);
 		graphics.player_coins.length--;
+	}
+
+	// lights
+	for (var i = 0; i < state.light_models.length; i++)
+	{
+		var light_model = state.light_models[i];
+		if (light_model.anim_time < con.light_tip_time)
+		{
+			light_model.anim_time = Math.min(light_model.anim_time + dt, con.light_tip_time);
+			var blend = light_model.anim_time / con.light_tip_time;
+			var graphic = graphics.light_models[i];
+			// rotate the model
+			switch (light_model.anim_dir)
+			{
+				case con.directions.right:
+					graphic.rotation.set(0, Math.PI * 0.5 * blend, 0);
+					break;
+				case con.directions.left:
+					graphic.rotation.set(0, Math.PI * -0.5 * blend, 0);
+					break;
+				case con.directions.forward:
+					graphic.rotation.set(Math.PI * -0.5 * blend, 0, 0);
+					break;
+				case con.directions.backward:
+					graphic.rotation.set(Math.PI * 0.5 * blend, 0, 0);
+					break;
+			}
+			if (blend == 1.0)
+			{
+				// kill the light
+				var point_light = graphic.children[0];
+				graphic.remove(point_light);
+			}
+		}
 	}
 
 	// camera
