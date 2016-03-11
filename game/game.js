@@ -1,11 +1,17 @@
 'use strict';
 
-// state
-
-var constants =
+// constants
+var con =
 {
-	max_camera_size: 25.0,
 	camera_offset: new THREE.Vector3(),
+	camera_size: 20.0,
+	codes:
+	{
+		wall: [0, 0, 0, 255],
+		light: [255, 0, 0, 255],
+		coin: [0, 255, 0, 255],
+		player: [255, 255, 0, 255],
+	},
 };
 
 var state =
@@ -27,15 +33,14 @@ var graphics =
 	scene: null,
 	camera: null,
 	renderer: null,
-	meshes: [],
-	camera_size: 1.0,
-	camera_size_target: 0,
+	scenery: [],
+	lights: [],
 	camera_pos: new THREE.Vector2(),
-	camera_pos_target: new THREE.Vector2(),
-	sunlight: null,
+	camera_pos_target: new THREE.Vector2(2, 10),
+	ground: null,
 	geom:
 	{
-		chandelier: null,
+		light: null,
 		player: null,
 		monster: null,
 		wall: null,
@@ -55,15 +60,68 @@ var global =
 	mouse_down: false,
 };
 
+// Three.js extensions
+
+THREE.FloorGeometry = function(width, height)
+{
+	THREE.BufferGeometry.call(this);
+
+	this.type = 'FloorGeometry';
+
+	this.parameters = {
+		width: width,
+		height: height,
+	};
+
+	var vertices = new Float32Array(4 * 3);
+	var normals = new Float32Array(4 * 3);
+	var uvs = new Float32Array(4 * 2);
+
+	var vertex = 0;
+	for (var y = 0; y < 2; y++)
+	{
+		for (var x = 0; x < 2; x++)
+		{
+			var offset3 = vertex * 3;
+			vertices[offset3] = x * width;
+			vertices[offset3 + 1] = y * height;
+
+			normals[offset3 + 2] = 1;
+
+			var offset2 = vertex * 2;
+			uvs[offset2] = x * width;
+			uvs[offset2 + 1] = y * height;
+			vertex++;
+		}
+	}
+
+	var indices = new Uint16Array(6);
+
+	indices[0] = 0;
+	indices[1] = 1;
+	indices[2] = 2;
+	indices[3] = 1;
+	indices[4] = 3;
+	indices[5] = 2;
+
+	this.setIndex(new THREE.BufferAttribute(indices, 1));
+	this.addAttribute('position', new THREE.BufferAttribute(vertices, 3));
+	this.addAttribute('normal', new THREE.BufferAttribute(normals, 3));
+	this.addAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+};
+
+THREE.FloorGeometry.prototype = Object.create(THREE.BufferGeometry.prototype);
+THREE.FloorGeometry.prototype.constructor = THREE.FloorGeometry;
+
 // procedures
 
-var funcs = {};
+var func = {};
 
-funcs.init = function()
+func.init = function()
 {
 	global.clock.start();
 
-	window.addEventListener('resize', funcs.on_resize, false);
+	window.addEventListener('resize', func.on_resize, false);
 
 	graphics.scene = new THREE.Scene();
 
@@ -73,36 +131,12 @@ funcs.init = function()
 		1,
 		1,
 		-1,
-		0.1, constants.max_camera_size * 4
+		0.1, con.camera_size * 4
 	);
 	graphics.camera.rotation.x = Math.PI * 0.2;
 	graphics.camera.rotation.y = Math.PI * 0.08;
 	graphics.camera.rotation.z = Math.PI * 0.08;
-	constants.camera_offset = graphics.camera.getWorldDirection().multiplyScalar(-constants.max_camera_size * 2.0);
-
-	{
-		var hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
-		hemiLight.color.setHSL(0.6, 1, 0.6);
-		hemiLight.groundColor.setHSL(0.095, 1, 0.75);
-		hemiLight.position.set(0, 500, 0);
-		graphics.scene.add(hemiLight);
-	}
-
-	{
-		graphics.sunlight = new THREE.DirectionalLight(0xffffff, 1);
-		graphics.sunlight.color.setHSL(0.1, 1, 0.95);
-		graphics.sunlight.position.set(1, 0.5, 1.75);
-		graphics.sunlight.position.multiplyScalar(50);
-		graphics.scene.add(graphics.sunlight);
-
-		graphics.sunlight.castShadow = true;
-
-		graphics.sunlight.shadow.mapSize.width = 2048;
-		graphics.sunlight.shadow.mapSize.height = 2048;
-
-		graphics.sunlight.shadow.camera.far = constants.max_camera_size * 5.0;
-		graphics.sunlight.shadow.bias = -0.001;
-	}
+	con.camera_offset = graphics.camera.getWorldDirection().multiplyScalar(-con.camera_size);
 
 	graphics.renderer = new THREE.WebGLRenderer({ antialias: true });
 	graphics.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -110,15 +144,12 @@ funcs.init = function()
 	graphics.renderer.gammaInput = true;
 	graphics.renderer.gammaOutput = true;
 
-	graphics.renderer.shadowMap.enabled = true;
-	graphics.renderer.shadowMap.cullFace = THREE.CullFaceBack;
-	graphics.renderer.shadowMap.type = THREE.PCFShadowMap;
-	graphics.renderer.setClearColor(0xccddff);
+	graphics.renderer.setClearColor(0x000000);
 	graphics.renderer.setPixelRatio(window.devicePixelRatio);
 
 	document.body.appendChild(graphics.renderer.domElement);
 
-	funcs.on_resize();
+	func.on_resize();
 
 	for (var geom_name in graphics.geom)
 	{
@@ -126,7 +157,7 @@ funcs.init = function()
 		graphics.model_loader.load('geom/' + geom_name + '.js', function(geometry, materials)
 		{
 			graphics.geom[local_geom_name] = geometry;
-			funcs.check_done_loading();
+			func.check_done_loading();
 		});
 	}
 
@@ -140,15 +171,14 @@ funcs.init = function()
 			{
 				texture.minFilter = texture.magFilter = THREE.NearestFilter;
 				graphics.texture[local_texture_name] = texture;
-				funcs.check_done_loading();
+				func.check_done_loading();
 			},
-			funcs.error
+			func.error
 		);
 	}
-
 };
 
-funcs.check_done_loading = function()
+func.check_done_loading = function()
 {
 	for (var name in graphics.geom)
 	{
@@ -162,28 +192,29 @@ funcs.check_done_loading = function()
 			return false;
 	}
 
-	$(window).on('resize', funcs.on_resize);
+	$(window).on('resize', func.on_resize);
 
 	window.focus();
-	$(document).on('keydown', funcs.on_keydown);
-	$(document).on('keyup', funcs.on_keyup);
+	$(document).on('keydown', func.on_keydown);
+	$(document).on('keyup', func.on_keyup);
 
-	$(document).on('mousedown', funcs.on_mousedown);
-	$(document).on('mousemove', funcs.on_mousemove);
-	$(document).on('mouseup', funcs.on_mouseup);
-	$(document).on('touchstart', funcs.on_mousedown);
-	$(document).on('touchmove', funcs.on_mousemove);
-	$(document).on('touchend', funcs.on_mouseup);
+	$(document).on('mousedown', func.on_mousedown);
+	$(document).on('mousemove', func.on_mousemove);
+	$(document).on('mouseup', func.on_mouseup);
+	$(document).on('touchstart', func.on_mousedown);
+	$(document).on('touchmove', func.on_mousemove);
+	$(document).on('touchend', func.on_mouseup);
 
 	graphics.camera_pos.copy(graphics.camera_pos_target);
-	graphics.camera_size = graphics.camera_size_target;
 
-	funcs.animate();
+	func.load_level(0);
+
+	func.update();
 
 	return true;
 };
 
-funcs.on_mousedown = function(event)
+func.on_mousedown = function(event)
 {
 	if (event.touches)
 	{
@@ -196,7 +227,7 @@ funcs.on_mousedown = function(event)
 	event.preventDefault();
 };
 
-funcs.on_mousemove = function(event)
+func.on_mousemove = function(event)
 {
 	if (event.touches)
 	{
@@ -208,16 +239,13 @@ funcs.on_mousemove = function(event)
 	event.preventDefault();
 };
 
-funcs.on_mouseup = function(event)
+func.on_mouseup = function(event)
 {
-	global.swipe_pos.sub(global.swipe_start);
-	if (global.swipe_pos.length() > 10.0)
-		funcs.move((2 + Math.round((Math.atan2(global.swipe_pos.x, -global.swipe_pos.y) - graphics.camera.rotation.y) / (Math.PI * 0.5))) % 4);
 	global.mouse_down = false;
 	event.preventDefault();
 };
 
-funcs.create_value_text = function(value, parent)
+func.create_value_text = function(value, parent)
 {
 	var value_string = Math.pow(2, value).toString();
 	var scale = value_string.length === 1 ? 1.0 : 1.5 / value_string.length;
@@ -238,7 +266,7 @@ funcs.create_value_text = function(value, parent)
 		material: 0,
 		extrudeMaterial: 0
 	});
-	var text = funcs.add_mesh(text_geometry, 0xffffff, null, parent);
+	var text = func.add_mesh(text_geometry, 0xffffff, null, parent);
 	text_geometry.computeBoundingBox();
 	text.position.z = 0.5;
 	text.position.x = -0.05 - 0.5 * (text_geometry.boundingBox.max.x - text_geometry.boundingBox.min.x);
@@ -247,34 +275,95 @@ funcs.create_value_text = function(value, parent)
 	return text;
 };
 
-funcs.load_level = function(level)
+func.load_level = function(level)
 {
-	for (var i = 0; i < graphics.meshes.length; i++)
-		graphics.scene.remove(graphics.meshes[i]);
-	graphics.meshes.length = 0;
+	// unload old stuff
+	if (graphics.ground)
+	{
+		graphics.scene.remove(graphics.ground);
+		graphics.ground = null;
+	}
+
+	for (var i = 0; i < graphics.scenery.length; i++)
+		graphics.scene.remove(graphics.scenery[i]);
+	graphics.scenery.length = 0;
+
+	for (var i = 0; i < graphics.lights.length; i++)
+		graphics.scene.remove(graphics.lights[i]);
+	graphics.lights.length = 0;
 
 	// load new stuff
+	state.level = level;
+	state.player.coins = 0;
 
-	graphics.ground = funcs.add_mesh(new THREE.PlaneBufferGeometry(1, 1), 0xffddcc);
 	graphics.texture_loader.load
 	(
-		'lvl' + level.difficulty + 'B.png',
+		'lvl/' + state.level + '.png',
 		function(texture)
 		{
-			texture.minFilter = texture.magFilter = THREE.NearestFilter;
-			graphics.ground.material.needsUpdate = true;
+			state.size.x = texture.image.width;
+			state.size.y = texture.image.height;
+
+			// read image data
+			var canvas = document.createElement('canvas');
+			canvas.width = texture.image.width;
+			canvas.height = texture.image.height;
+			var ctx = canvas.getContext('2d');
+			ctx.drawImage(texture.image, 0, 0, texture.image.width, texture.image.height, 0, 0, texture.image.width, texture.image.height);
+			var canvas_data = ctx.getImageData(0, 0, texture.image.width, texture.image.height);
+
+			var pixel_equals = function(offset, color)
+			{
+				return canvas_data.data[offset] === color[0]
+					&& canvas_data.data[offset + 1] === color[1]
+					&& canvas_data.data[offset + 2] === color[2]
+					&& canvas_data.data[offset + 3] === color[3];
+			};
+
+			for (var x = 0; x < state.size.x; x++)
+			{
+				for (var y = 0; y < state.size.y; y++)
+				{
+					var offset = (x + (y * state.size.x)) * 4;
+					if (pixel_equals(offset, con.codes.wall))
+					{
+						var wall = func.add_mesh(graphics.geom.wall, 0xffffff);
+						wall.material.map = graphics.texture.wall;
+						graphics.scenery.push(wall);
+						wall.position.x = x + 0.5;
+						wall.position.y = (state.size.y - y) - 0.5;
+					}
+					else if (pixel_equals(offset, con.codes.light))
+					{
+						var light = func.add_mesh(graphics.geom.light, 0xcccc44);
+						graphics.scenery.push(light);
+						light.position.set(x + 0.5, (state.size.y - y) - 0.5, 0);
+
+						var point_light = new THREE.PointLight(0xdd9977, 1, 5);
+						point_light.position.set(light.position.x, light.position.y, 3.0);
+						graphics.lights.push(point_light);
+						graphics.scene.add(point_light);
+					}
+					else if (pixel_equals(offset, con.codes.player))
+					{
+						state.player.pos.x = x;
+						state.player.pos.y = state.size.y - y;
+					}
+				}
+			}
+
+			graphics.texture.floor.wrapS = THREE.RepeatWrapping;
+			graphics.texture.floor.wrapT = THREE.RepeatWrapping;
+			graphics.ground = func.add_mesh(new THREE.FloorGeometry(state.size.x, state.size.y), 0xffddcc);
+			graphics.ground.material.map = graphics.texture.floor;
 		},
-		funcs.error
+		func.error
 	);
 	
-	graphics.ground.scale.set(state.size.x, state.size.y, 1);
-	graphics.ground.position.set(state.size.x * 0.5 - 0.5, state.size.y * 0.5 - 0.5, 0);
-
 	graphics.camera_pos.copy(graphics.camera_pos_target);
-	graphics.camera_size = graphics.camera_size_target;
 };
 
-funcs.add_mesh = function(geometry, color, materials, parent)
+func.add_mesh = function(geometry, color, materials, parent)
 {
 	var material;
 	if (materials)
@@ -300,34 +389,38 @@ funcs.add_mesh = function(geometry, color, materials, parent)
 	return mesh;
 };
 
-funcs.animate = function()
+func.update = function()
 {
-	requestAnimationFrame(funcs.animate);
+	requestAnimationFrame(func.update);
 
 	var dt = global.clock.getDelta();
 
+	graphics.camera_pos_target.copy(state.player.pos);
+
 	graphics.camera_pos.lerp(graphics.camera_pos_target, dt * 10.0);
 
-	graphics.camera_size = graphics.camera_size < graphics.camera_size_target
-		? Math.min(graphics.camera_size_target, graphics.camera_size + dt * 10.0)
-		: Math.max(graphics.camera_size_target, graphics.camera_size - dt * 10.0);
+	graphics.camera.position.set(graphics.camera_pos.x, graphics.camera_pos.y, 0).add(con.camera_offset);
 
-	graphics.camera.position.set(graphics.camera_pos.x, graphics.camera_pos.y, 0).add(constants.camera_offset);
+	func.update_projection();
 
-	funcs.update_projection();
+	for (var i = 0; i < graphics.lights.length; i++)
+	{
+		var intensity = graphics.lights[i].intensity = 0.98 + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * 0.02;
+		graphics.lights[i].distance = 5.0 * intensity;
+	}
 
 	graphics.renderer.render(graphics.scene, graphics.camera);
 };
 
-funcs.on_resize = function()
+func.on_resize = function()
 {
 	graphics.renderer.setSize(window.innerWidth, window.innerHeight);
 };
 
-funcs.update_projection = function()
+func.update_projection = function()
 {
 	var min_size = window.innerWidth < window.innerHeight ? window.innerWidth : window.innerHeight;
-	var zoom = graphics.camera_size / min_size;
+	var zoom = con.camera_size / min_size;
 	graphics.camera.left = -0.5 * window.innerWidth * zoom;
 	graphics.camera.right = 0.5 * window.innerWidth * zoom;
 	graphics.camera.top = 0.5 * window.innerHeight * zoom;
@@ -335,23 +428,7 @@ funcs.update_projection = function()
 	graphics.camera.updateProjectionMatrix();
 };
 
-funcs.update_camera_target = function(pos)
-{
-	graphics.camera_pos_target.copy(pos);
-	
-	var size = Math.max(state.size.x, state.size.y);
-	graphics.camera_size_target = Math.min(size, constants.max_camera_size);
-
-	var d = constants.max_camera_size * 1.5;
-
-	graphics.sunlight.shadow.camera.left = graphics.camera_pos_target.x - d;
-	graphics.sunlight.shadow.camera.right = graphics.camera_pos_target.x + d;
-	graphics.sunlight.shadow.camera.top = graphics.camera_pos_target.y + d;
-	graphics.sunlight.shadow.camera.bottom = graphics.camera_pos_target.y - d;
-	graphics.sunlight.shadow.camera.updateProjectionMatrix();
-};
-
 $(document).ready(function()
 {
-	funcs.init();
+	func.init();
 });
