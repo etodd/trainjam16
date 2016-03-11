@@ -4,16 +4,33 @@
 var con =
 {
 	camera_offset: new THREE.Vector3(),
-	camera_size: 20.0,
+	camera_size: 15.0,
+	directions:
+	{
+		right: new THREE.Vector2(0.5, 0),
+		left: new THREE.Vector2(-0.5, 0),
+		forward: new THREE.Vector2(0, 0.5),
+		backward: new THREE.Vector2(0, -0.5),
+	},
+	max_capacity: 4,
+	masks:
+	{
+		wall: 1 << 0,
+		light: 1 << 1,
+		coin: 1 << 2,
+		player: 1 << 3,
+		door: 1 << 4,
+	},
 	codes:
 	{
-		wall: [0, 0, 0, 255],
-		light: [255, 0, 0, 255],
-		coin: [0, 255, 0, 255],
-		player: [255, 255, 0, 255],
+		wall: [0, 0, 0],
+		light: [255, 0, 0],
+		coin: [0, 255, 0],
+		player: [255, 255, 0],
+		door: [0, 255, 255],
 	},
 	speed_multiplier: 1.0,
-	speed_max: 3,
+	speed_max: 5,
 };
 
 var state =
@@ -21,10 +38,15 @@ var state =
 	level: 0,
 	grid: null,
 	size: new THREE.Vector2(),
+	door: new THREE.Vector2(),
+	door_coins: 1,
+	bank_coins: 0,
+	coins: [],
 	player:
 	{
 		pos: new THREE.Vector2(),
 		coins: 0,
+		light: 1,
 	},
 };
 
@@ -36,18 +58,22 @@ var graphics =
 	camera: null,
 	renderer: null,
 	scenery: [],
-	lights: [],
+	flicker_lights: [],
+	coins: [],
+	player_coins: [],
 	camera_pos: new THREE.Vector2(),
 	camera_pos_target: new THREE.Vector2(2, 10),
 	ground: null,
 	player: null,
 	player_light: null,
+	levels: [],
 	geom:
 	{
 		light: null,
 		player: null,
 		monster: null,
 		wall: null,
+		coin: null,
 	},
 	texture:
 	{
@@ -62,7 +88,6 @@ var global =
 	clock: new THREE.Clock(),
 	mouse: new THREE.Vector2(),
 	mouse_down: false,
-	last_mouse_down: false,
 };
 
 // Three.js extensions
@@ -73,7 +98,8 @@ THREE.FloorGeometry = function(width, height)
 
 	this.type = 'FloorGeometry';
 
-	this.parameters = {
+	this.parameters =
+	{
 		width: width,
 		height: height,
 	};
@@ -212,9 +238,10 @@ func.check_done_loading = function()
 
 	graphics.player = func.add_mesh(graphics.geom.player, 0xff0000);
 	graphics.player_light = new THREE.PointLight(0xaa3311, 1, 5);
-	graphics.scene.add(graphics.player_light);
+	graphics.player_light.position.set(0, 0, 1.5);
+	graphics.player.add(graphics.player_light);
 
-	func.load_level(0);
+	func.load_level(state.level);
 
 	func.update();
 
@@ -285,6 +312,12 @@ func.create_value_text = function(value, parent)
 func.load_level = function(level)
 {
 	// unload old stuff
+	state.player.coins = 0;
+	state.player.light = 1;
+	state.grid = null;
+	state.coins.length = 0;
+	state.bank_coins = 0;
+
 	if (graphics.ground)
 	{
 		graphics.scene.remove(graphics.ground);
@@ -295,85 +328,105 @@ func.load_level = function(level)
 		graphics.scene.remove(graphics.scenery[i]);
 	graphics.scenery.length = 0;
 
-	for (var i = 0; i < graphics.lights.length; i++)
-		graphics.scene.remove(graphics.lights[i]);
-	graphics.lights.length = 0;
+	graphics.flicker_lights.length = 0;
 
 	// load new stuff
 	state.level = level;
-	state.player.coins = 0;
 
-	graphics.texture_loader.load
-	(
-		'lvl/' + state.level + '.png',
-		function(texture)
+	if (graphics.levels[state.level])
+		func.parse_level_texture(graphics.levels[state.level]);
+	else
+	{
+		graphics.texture_loader.load
+		(
+			'lvl/' + state.level + '.png',
+			func.parse_level_texture,
+			func.error
+		);
+	}
+};
+
+func.parse_level_texture = function(texture)
+{
+	graphics.levels[state.level] = texture;
+
+	state.size.x = texture.image.width;
+	state.size.y = texture.image.height;
+
+	state.grid = new Array(state.size.x);
+	for (var i = 0; i < state.grid.length; i++)
+		state.grid[i] = new Array(state.size.y);
+
+	// read image data
+	var canvas = document.createElement('canvas');
+	canvas.width = texture.image.width;
+	canvas.height = texture.image.height;
+	var ctx = canvas.getContext('2d');
+	ctx.drawImage(texture.image, 0, 0, texture.image.width, texture.image.height, 0, 0, texture.image.width, texture.image.height);
+	var canvas_data = ctx.getImageData(0, 0, texture.image.width, texture.image.height);
+
+	var pixel_equals = function(offset, color)
+	{
+		return canvas_data.data[offset] === color[0]
+			&& canvas_data.data[offset + 1] === color[1]
+			&& canvas_data.data[offset + 2] === color[2];
+	};
+
+	var pos = new THREE.Vector2();
+	for (var x = 0; x < state.size.x; x++)
+	{
+		for (var y = 0; y < state.size.y; y++)
 		{
-			state.size.x = texture.image.width;
-			state.size.y = texture.image.height;
-
-			state.grid = new Array(state.size.x);
-			for (var i = 0; i < state.grid.length; i++)
-				state.grid[i] = new Array(state.size.y);
-
-			// read image data
-			var canvas = document.createElement('canvas');
-			canvas.width = texture.image.width;
-			canvas.height = texture.image.height;
-			var ctx = canvas.getContext('2d');
-			ctx.drawImage(texture.image, 0, 0, texture.image.width, texture.image.height, 0, 0, texture.image.width, texture.image.height);
-			var canvas_data = ctx.getImageData(0, 0, texture.image.width, texture.image.height);
-
-			var pixel_equals = function(offset, color)
+			var grid_value = 0;
+			var offset = (x + (((state.size.y - 1) - y) * state.size.x)) * 4;
+			pos.set(x + 0.5, y + 0.5);
+			if (pixel_equals(offset, con.codes.wall))
 			{
-				return canvas_data.data[offset] === color[0]
-					&& canvas_data.data[offset + 1] === color[1]
-					&& canvas_data.data[offset + 2] === color[2]
-					&& canvas_data.data[offset + 3] === color[3];
-			};
-
-			for (var x = 0; x < state.size.x; x++)
-			{
-				for (var y = 0; y < state.size.y; y++)
-				{
-					var grid_value = false;
-					var offset = (x + (y * state.size.x)) * 4;
-					if (pixel_equals(offset, con.codes.wall))
-					{
-						var wall = func.add_mesh(graphics.geom.wall, 0xffffff);
-						wall.material.map = graphics.texture.wall;
-						graphics.scenery.push(wall);
-						wall.position.x = x + 0.5;
-						wall.position.y = (state.size.y - y) + 0.5;
-						grid_value = true;
-					}
-					else if (pixel_equals(offset, con.codes.light))
-					{
-						var light = func.add_mesh(graphics.geom.light, 0xcccc44);
-						graphics.scenery.push(light);
-						light.position.set(x + 0.5, (state.size.y - y) + 0.5, 0);
-
-						var point_light = new THREE.PointLight(0xdd9977, 1, 5);
-						point_light.position.set(light.position.x, light.position.y, 3.0);
-						graphics.lights.push(point_light);
-						graphics.scene.add(point_light);
-						grid_value = true;
-					}
-					else if (pixel_equals(offset, con.codes.player))
-					{
-						state.player.pos.x = x;
-						state.player.pos.y = state.size.y - y;
-					}
-					state.grid[x][state.size.y - y] = grid_value;
-				}
+				var wall = func.add_mesh(graphics.geom.wall, 0xffffff);
+				wall.material.map = graphics.texture.wall;
+				graphics.scenery.push(wall);
+				wall.position.set(pos.x, pos.y, 0);
+				grid_value = con.masks.wall;
 			}
+			else if (pixel_equals(offset, con.codes.light))
+			{
+				var light = func.add_mesh(graphics.geom.light, 0xcccc44);
+				graphics.scenery.push(light);
+				light.position.set(pos.x, pos.y, 0);
 
-			graphics.texture.floor.wrapS = THREE.RepeatWrapping;
-			graphics.texture.floor.wrapT = THREE.RepeatWrapping;
-			graphics.ground = func.add_mesh(new THREE.FloorGeometry(state.size.x, state.size.y), 0xffddcc);
-			graphics.ground.material.map = graphics.texture.floor;
-		},
-		func.error
-	);
+				var point_light = new THREE.PointLight(0xdd9977, 1, 5);
+				point_light.position.set(0, 0, 3.0);
+				light.add(point_light);
+				grid_value = con.masks.light;
+			}
+			else if (pixel_equals(offset, con.codes.player))
+				state.player.pos.copy(pos);
+			else if (canvas_data.data[offset] < 255
+				&& canvas_data.data[offset + 1] === con.codes.door[1]
+				&& canvas_data.data[offset + 2] === con.codes.door[2])
+			{
+				var door = func.add_mesh(graphics.geom.door, 0xcccc44);
+				graphics.scenery.push(door);
+				door.position.set(pos.x, pos.y, 0);
+
+				state.door.set(x, y);
+				state.door_coins = canvas_data.data[offset];
+
+				var point_light = new THREE.PointLight(0xffffff, 1, 5);
+				point_light.position.set(0, 0, 3.0);
+				door.add(point_light);
+				grid_value = con.masks.door;
+			}
+			else if (pixel_equals(offset, con.codes.coin))
+				state.coins.push(pos.clone());
+			state.grid[x][y] = grid_value;
+		}
+	}
+
+	graphics.texture.floor.wrapS = THREE.RepeatWrapping;
+	graphics.texture.floor.wrapT = THREE.RepeatWrapping;
+	graphics.ground = func.add_mesh(new THREE.FloorGeometry(state.size.x, state.size.y), 0xffddcc);
+	graphics.ground.material.map = graphics.texture.floor;
 	
 	graphics.camera_pos_target.copy(state.player.pos);
 	graphics.camera_pos.copy(graphics.camera_pos_target);
@@ -405,27 +458,30 @@ func.add_mesh = function(geometry, color, materials, parent)
 	return mesh;
 };
 
-func.flicker_light = function(light, i)
+func.flicker_light = function(light, i, scale)
 {
-	var intensity = light.intensity = 0.98 + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * 0.02;
+	if (typeof scale === 'undefined')
+		scale = 1.0;
+	var intensity = light.intensity = scale * (0.98 + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * 0.02);
 	light.distance = 5.0 * intensity;
 };
 
 func.collides = function(pos, x, y)
 {
 	return pos.x > x && pos.x < x + 1
-		&& pos.y > y && pos.y < y + 1
+		&& pos.y > y && pos.y < y + 1;
 };
 
 func.closest_corner = function(pos, x, y)
 {
 	var closest_distance = 1000;
 	var closest_corner = new THREE.Vector2();
+	var diff = new THREE.Vector2();
 	for (var _x = x; _x < x + 2; _x++)
 	{
 		for (var _y = y; _y < y + 2; _y++)
 		{
-			var distance = new THREE.Vector2(_x, _y).sub(pos).length();
+			var distance = diff.set(_x, _y).sub(pos).length();
 			if (distance < closest_distance)
 			{
 				closest_corner.set(_x, _y);
@@ -433,10 +489,99 @@ func.closest_corner = function(pos, x, y)
 			}
 		}
 	}
+
 	return {
 		corner: closest_corner,
 		distance: closest_distance,
 	};
+};
+
+func.move_body = function(position, velocity, dt, speed_max, mask)
+{
+	if (typeof speed_max === 'undefined')
+		speed_max = con.speed_max;
+	if (typeof mask === 'undefined')
+		mask = 0xffffff;
+
+	var collided_mask = 0;
+
+	var speed = velocity.length();
+	if (speed > 0)
+	{
+		if (speed > speed_max)
+		{
+			velocity.multiplyScalar(con.speed_max / speed);
+			speed = speed_max;
+		}
+
+		var coord_x = Math.floor(position.x);
+		var coord_y = Math.floor(position.y);
+		for (var x = coord_x - 1; x < coord_x + 2; x++)
+		{
+			for (var y = coord_y - 1; y < coord_y + 2; y++)
+			{
+				if (x >= 0 && x < state.size.x
+					&& y >= 0 && y < state.size.y
+					&& (state.grid[x][y] & mask))
+				{
+					// first check cardinal directions
+					if (func.collides(position.clone().add(con.directions.right), x, y))
+					{
+						position.x = x - 0.5;
+						velocity.x = Math.min(velocity.x, 0);
+						collided_mask |= state.grid[x][y];
+					}
+					else if (func.collides(position.clone().add(con.directions.left), x, y))
+					{
+						position.x = x + 1.5;
+						velocity.x = Math.max(velocity.x, 0);
+						collided_mask |= state.grid[x][y];
+					}
+					else if (func.collides(position.clone().add(con.directions.forward), x, y))
+					{
+						position.y = y - 0.5;
+						velocity.y = Math.min(velocity.y, 0);
+						collided_mask |= state.grid[x][y];
+					}
+					else if (func.collides(position.clone().add(con.directions.backward), x, y))
+					{
+						position.y = y + 1.5;
+						velocity.y = Math.max(velocity.y, 0);
+						collided_mask |= state.grid[x][y];
+					}
+					else
+					{
+						var corner_info = func.closest_corner(position, x, y);
+						if (corner_info.distance < 0.5)
+						{
+							var corner_to_body_normalized = position.clone().sub(corner_info.corner);
+							corner_to_body_normalized.normalize();
+
+							var adjustment = corner_to_body_normalized.clone();
+							adjustment.multiplyScalar(0.5 - corner_info.distance);
+							position.add(adjustment);
+
+							var penetration_velocity = velocity.dot(corner_to_body_normalized);
+							corner_to_body_normalized.multiplyScalar(penetration_velocity);
+							velocity.add(corner_to_body_normalized);
+
+							collided_mask |= state.grid[x][y];
+						}
+					}
+				}
+			}
+		}
+
+		var new_speed = velocity.length();
+		if (new_speed > 1.0)
+		{
+			velocity.multiplyScalar(speed / new_speed);
+			var final_velocity = velocity.clone();
+			final_velocity.multiplyScalar(dt);
+			position.add(final_velocity);
+		}
+	}
+	return collided_mask;
 };
 
 func.update = function()
@@ -447,10 +592,19 @@ func.update = function()
 
 	// player
 	graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
-	graphics.player_light.position.set(state.player.pos.x + 0.5, state.player.pos.y - 0.5, 1.5);
-	func.flicker_light(graphics.player_light, 0);
+	state.player.light = Math.max(0, state.player.light + dt * -0.0035);
+	func.flicker_light(graphics.player_light, 0, state.player.light);
 
-	if (global.mouse_down)
+	if (Math.floor(state.player.pos.x) === state.door.x
+		&& Math.floor(state.player.pos.y) === state.door.y
+		&& state.bank_coins >= state.door_coins)
+	{
+		state.level++;
+		func.load_level(state.level);
+	}
+
+	var player_velocity = new THREE.Vector2();
+	if (state.grid && global.mouse_down)
 	{
 		var view_proj = graphics.camera.projectionMatrix.clone();
 		view_proj.multiply(graphics.camera.matrixWorldInverse);
@@ -476,77 +630,72 @@ func.update = function()
 		var target_x = ray_start.x + (ray_end.x - ray_start.x) * d;
 		var target_y = ray_start.y + (ray_end.y - ray_start.y) * d;
 
-		var velocity = new THREE.Vector2(target_x - state.player.pos.x, target_y - state.player.pos.y);
-		velocity.multiplyScalar(con.speed_multiplier);
-		var speed = velocity.length();
-		if (speed > 0)
+		player_velocity.set(target_x - state.player.pos.x, target_y - state.player.pos.y);
+		var coin_multiplier = 0.5 + (0.5 * (con.max_capacity - state.player.coins) / con.max_capacity);
+		player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
+		var mask;
+		if (state.bank_coins < state.door_coins)
+			mask = 0xffffff; // collide with the door, don't go through it
+		else
+			mask = ~con.masks.door;
+		var collided_mask = func.move_body(state.player.pos, player_velocity, dt, con.speed_max * coin_multiplier, mask);
+		if (collided_mask & con.masks.door)
 		{
-			if (speed > con.speed_max)
-			{
-				velocity.multiplyScalar(con.speed_max / speed);
-				speed = con.speed_max;
-			}
-
-			var player_coord_x = Math.floor(state.player.pos.x);
-			var player_coord_y = Math.floor(state.player.pos.y);
-			for (var x = player_coord_x - 1; x < player_coord_x + 2; x++)
-			{
-				for (var y = player_coord_y - 1; y < player_coord_y + 2; y++)
-				{
-					if (state.grid[x][y])
-					{
-						// first check cardinal directions
-						if (func.collides(state.player.pos.clone().add(new THREE.Vector2(0.5, 0)), x, y))
-						{
-							state.player.pos.x = x - 0.5;
-							velocity.x = Math.min(velocity.x, 0);
-						}
-						else if (func.collides(state.player.pos.clone().add(new THREE.Vector2(-0.5, 0)), x, y))
-						{
-							state.player.pos.x = x + 1.5;
-							velocity.x = Math.max(velocity.x, 0);
-						}
-						else if (func.collides(state.player.pos.clone().add(new THREE.Vector2(0, 0.5)), x, y))
-						{
-							state.player.pos.y = y - 0.5;
-							velocity.y = Math.min(velocity.y, 0);
-						}
-						else if (func.collides(state.player.pos.clone().add(new THREE.Vector2(0, -0.5)), x, y))
-						{
-							state.player.pos.y = y + 1.5;
-							velocity.y = Math.max(velocity.y, 0);
-						}
-						else
-						{
-							var corner_info = func.closest_corner(state.player.pos, x, y);
-							if (corner_info.distance < 0.5)
-							{
-								var corner_to_player_normalized = state.player.pos.clone().sub(corner_info.corner);
-								corner_to_player_normalized.normalize();
-
-								var adjustment = corner_to_player_normalized.clone();
-								adjustment.multiplyScalar(0.5 - corner_info.distance);
-								state.player.pos.add(adjustment);
-
-								var penetration_velocity = velocity.dot(corner_to_player_normalized);
-								corner_to_player_normalized.multiplyScalar(penetration_velocity);
-								velocity.add(corner_to_player_normalized);
-							}
-						}
-					}
-				}
-			}
-
-			var new_speed = velocity.length();
-			if (new_speed > 0.0)
-			{
-				velocity.multiplyScalar(dt * (speed / new_speed));
-				state.player.pos.add(velocity);
-			}
+			state.bank_coins += state.player.coins;
+			state.player.coins = 0;
 		}
 	}
 
-	global.last_mouse_down = global.mouse_down;
+	// coins
+	while (graphics.coins.length < state.coins.length)
+		graphics.coins.push(func.add_mesh(graphics.geom.coin, 0xffff00));
+	for (var i = 0; i < state.coins.length; i++)
+	{
+		var coin = state.coins[i];
+		var diff = coin.clone().sub(state.player.pos);
+		if (diff.length() < 1)
+		{
+			if (state.player.coins < con.max_capacity)
+			{
+				state.player.coins++;
+				state.coins.splice(i, 1);
+				i--;
+			}
+			else
+			{
+				// push coin around
+				var coin_velocity = diff.clone();
+				diff.normalize();
+				var dot = player_velocity.dot(diff);
+				if (dot > 0.0)
+				{
+					coin_velocity.multiplyScalar(dot);
+					func.move_body(coin, coin_velocity, dt);
+					graphics.coins[i].position.set(coin.x, coin.y, 0);
+				}
+			}
+		}
+		else
+			graphics.coins[i].position.set(coin.x, coin.y, 0);
+	}
+	while (graphics.coins.length > state.coins.length)
+	{
+		graphics.scene.remove(graphics.coins[graphics.coins.length - 1]);
+		graphics.coins.length--;
+	}
+
+	// player coins
+	while (graphics.player_coins.length < state.player.coins)
+	{
+		var coin = func.add_mesh(graphics.geom.coin, 0xffff00, null, graphics.player);
+		coin.position.z = 1 + graphics.player_coins.length * 0.3;
+		graphics.player_coins.push(coin);
+	}
+	while (graphics.player_coins.length > state.player.coins)
+	{
+		graphics.player.remove(graphics.player_coins[graphics.player_coins.length - 1]);
+		graphics.player_coins.length--;
+	}
 
 	// camera
 	graphics.camera_pos_target.copy(state.player.pos);
@@ -555,8 +704,8 @@ func.update = function()
 	func.update_projection();
 
 	// lights
-	for (var i = 0; i < graphics.lights.length; i++)
-		func.flicker_light(graphics.lights[i], i);
+	for (var i = 0; i < graphics.flicker_lights.length; i++)
+		func.flicker_light(graphics.flicker_lights[i], i);
 
 	// render
 	graphics.renderer.render(graphics.scene, graphics.camera);
