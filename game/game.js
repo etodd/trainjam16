@@ -311,6 +311,10 @@ func.load_level = function(level)
 			state.size.x = texture.image.width;
 			state.size.y = texture.image.height;
 
+			state.grid = new Array(state.size.x);
+			for (var i = 0; i < state.grid.length; i++)
+				state.grid[i] = new Array(state.size.y);
+
 			// read image data
 			var canvas = document.createElement('canvas');
 			canvas.width = texture.image.width;
@@ -331,6 +335,7 @@ func.load_level = function(level)
 			{
 				for (var y = 0; y < state.size.y; y++)
 				{
+					var grid_value = false;
 					var offset = (x + (y * state.size.x)) * 4;
 					if (pixel_equals(offset, con.codes.wall))
 					{
@@ -338,24 +343,27 @@ func.load_level = function(level)
 						wall.material.map = graphics.texture.wall;
 						graphics.scenery.push(wall);
 						wall.position.x = x + 0.5;
-						wall.position.y = (state.size.y - y) - 0.5;
+						wall.position.y = (state.size.y - y) + 0.5;
+						grid_value = true;
 					}
 					else if (pixel_equals(offset, con.codes.light))
 					{
 						var light = func.add_mesh(graphics.geom.light, 0xcccc44);
 						graphics.scenery.push(light);
-						light.position.set(x + 0.5, (state.size.y - y) - 0.5, 0);
+						light.position.set(x + 0.5, (state.size.y - y) + 0.5, 0);
 
 						var point_light = new THREE.PointLight(0xdd9977, 1, 5);
 						point_light.position.set(light.position.x, light.position.y, 3.0);
 						graphics.lights.push(point_light);
 						graphics.scene.add(point_light);
+						grid_value = true;
 					}
 					else if (pixel_equals(offset, con.codes.player))
 					{
 						state.player.pos.x = x;
 						state.player.pos.y = state.size.y - y;
 					}
+					state.grid[x][state.size.y - y] = grid_value;
 				}
 			}
 
@@ -403,6 +411,34 @@ func.flicker_light = function(light, i)
 	light.distance = 5.0 * intensity;
 };
 
+func.collides = function(pos, x, y)
+{
+	return pos.x > x && pos.x < x + 1
+		&& pos.y > y && pos.y < y + 1
+};
+
+func.closest_corner = function(pos, x, y)
+{
+	var closest_distance = 1000;
+	var closest_corner = new THREE.Vector2();
+	for (var _x = x; _x < x + 2; _x++)
+	{
+		for (var _y = y; _y < y + 2; _y++)
+		{
+			var distance = new THREE.Vector2(_x, _y).sub(pos).length();
+			if (distance < closest_distance)
+			{
+				closest_corner.set(_x, _y);
+				closest_distance = distance;
+			}
+		}
+	}
+	return {
+		corner: closest_corner,
+		distance: closest_distance,
+	};
+};
+
 func.update = function()
 {
 	requestAnimationFrame(func.update);
@@ -446,11 +482,70 @@ func.update = function()
 		if (speed > 0)
 		{
 			if (speed > con.speed_max)
+			{
 				velocity.multiplyScalar(con.speed_max / speed);
-			velocity.multiplyScalar(dt);
-			state.player.pos.add(velocity);
+				speed = con.speed_max;
+			}
+
+			var player_coord_x = Math.floor(state.player.pos.x);
+			var player_coord_y = Math.floor(state.player.pos.y);
+			for (var x = player_coord_x - 1; x < player_coord_x + 2; x++)
+			{
+				for (var y = player_coord_y - 1; y < player_coord_y + 2; y++)
+				{
+					if (state.grid[x][y])
+					{
+						// first check cardinal directions
+						if (func.collides(state.player.pos.clone().add(new THREE.Vector2(0.5, 0)), x, y))
+						{
+							state.player.pos.x = x - 0.5;
+							velocity.x = Math.min(velocity.x, 0);
+						}
+						else if (func.collides(state.player.pos.clone().add(new THREE.Vector2(-0.5, 0)), x, y))
+						{
+							state.player.pos.x = x + 1.5;
+							velocity.x = Math.max(velocity.x, 0);
+						}
+						else if (func.collides(state.player.pos.clone().add(new THREE.Vector2(0, 0.5)), x, y))
+						{
+							state.player.pos.y = y - 0.5;
+							velocity.y = Math.min(velocity.y, 0);
+						}
+						else if (func.collides(state.player.pos.clone().add(new THREE.Vector2(0, -0.5)), x, y))
+						{
+							state.player.pos.y = y + 1.5;
+							velocity.y = Math.max(velocity.y, 0);
+						}
+						else
+						{
+							var corner_info = func.closest_corner(state.player.pos, x, y);
+							if (corner_info.distance < 0.5)
+							{
+								var corner_to_player_normalized = state.player.pos.clone().sub(corner_info.corner);
+								corner_to_player_normalized.normalize();
+
+								var adjustment = corner_to_player_normalized.clone();
+								adjustment.multiplyScalar(0.5 - corner_info.distance);
+								state.player.pos.add(adjustment);
+
+								var penetration_velocity = velocity.dot(corner_to_player_normalized);
+								corner_to_player_normalized.multiplyScalar(penetration_velocity);
+								velocity.add(corner_to_player_normalized);
+							}
+						}
+					}
+				}
+			}
+
+			var new_speed = velocity.length();
+			if (new_speed > 0.0)
+			{
+				velocity.multiplyScalar(dt * (speed / new_speed));
+				state.player.pos.add(velocity);
+			}
 		}
 	}
+
 	global.last_mouse_down = global.mouse_down;
 
 	// camera
