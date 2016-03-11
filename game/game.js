@@ -12,6 +12,8 @@ var con =
 		coin: [0, 255, 0, 255],
 		player: [255, 255, 0, 255],
 	},
+	speed_multiplier: 1.0,
+	speed_max: 3,
 };
 
 var state =
@@ -38,6 +40,8 @@ var graphics =
 	camera_pos: new THREE.Vector2(),
 	camera_pos_target: new THREE.Vector2(2, 10),
 	ground: null,
+	player: null,
+	player_light: null,
 	geom:
 	{
 		light: null,
@@ -58,6 +62,7 @@ var global =
 	clock: new THREE.Clock(),
 	mouse: new THREE.Vector2(),
 	mouse_down: false,
+	last_mouse_down: false,
 };
 
 // Three.js extensions
@@ -205,7 +210,9 @@ func.check_done_loading = function()
 	$(document).on('touchmove', func.on_mousemove);
 	$(document).on('touchend', func.on_mouseup);
 
-	graphics.camera_pos.copy(graphics.camera_pos_target);
+	graphics.player = func.add_mesh(graphics.geom.player, 0xff0000);
+	graphics.player_light = new THREE.PointLight(0xaa3311, 1, 5);
+	graphics.scene.add(graphics.player_light);
 
 	func.load_level(0);
 
@@ -360,6 +367,7 @@ func.load_level = function(level)
 		func.error
 	);
 	
+	graphics.camera_pos_target.copy(state.player.pos);
 	graphics.camera_pos.copy(graphics.camera_pos_target);
 };
 
@@ -389,26 +397,73 @@ func.add_mesh = function(geometry, color, materials, parent)
 	return mesh;
 };
 
+func.flicker_light = function(light, i)
+{
+	var intensity = light.intensity = 0.98 + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * 0.02;
+	light.distance = 5.0 * intensity;
+};
+
 func.update = function()
 {
 	requestAnimationFrame(func.update);
 
 	var dt = global.clock.getDelta();
 
+	// player
+	graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
+	graphics.player_light.position.set(state.player.pos.x + 0.5, state.player.pos.y - 0.5, 1.5);
+	func.flicker_light(graphics.player_light, 0);
+
+	if (global.mouse_down)
+	{
+		var view_proj = graphics.camera.projectionMatrix.clone();
+		view_proj.multiply(graphics.camera.matrixWorldInverse);
+
+		var inv_view_proj = new THREE.Matrix4();
+		inv_view_proj.getInverse(view_proj);
+
+		var mouse_x = (global.mouse.x / window.innerWidth) * 2.0 - 1.0;
+		var mouse_y = (1.0 - (global.mouse.y / window.innerHeight)) * 2.0 - 1.0;
+		var ray =
+		[
+			mouse_x, mouse_y, 0.0,
+			mouse_x, mouse_y, 1.0,
+		];
+
+		inv_view_proj.applyToVector3Array(ray);
+
+		// intersect with plane
+		var ray_start = new THREE.Vector3(ray[0], ray[1], ray[2]);
+		var ray_end = new THREE.Vector3(ray[3], ray[4], ray[5]);
+		var d = ray_start.z / (ray_start.z - ray_end.z);
+
+		var target_x = ray_start.x + (ray_end.x - ray_start.x) * d;
+		var target_y = ray_start.y + (ray_end.y - ray_start.y) * d;
+
+		var velocity = new THREE.Vector2(target_x - state.player.pos.x, target_y - state.player.pos.y);
+		velocity.multiplyScalar(con.speed_multiplier);
+		var speed = velocity.length();
+		if (speed > 0)
+		{
+			if (speed > con.speed_max)
+				velocity.multiplyScalar(con.speed_max / speed);
+			velocity.multiplyScalar(dt);
+			state.player.pos.add(velocity);
+		}
+	}
+	global.last_mouse_down = global.mouse_down;
+
+	// camera
 	graphics.camera_pos_target.copy(state.player.pos);
-
 	graphics.camera_pos.lerp(graphics.camera_pos_target, dt * 10.0);
-
 	graphics.camera.position.set(graphics.camera_pos.x, graphics.camera_pos.y, 0).add(con.camera_offset);
-
 	func.update_projection();
 
+	// lights
 	for (var i = 0; i < graphics.lights.length; i++)
-	{
-		var intensity = graphics.lights[i].intensity = 0.98 + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * 0.02;
-		graphics.lights[i].distance = 5.0 * intensity;
-	}
+		func.flicker_light(graphics.lights[i], i);
 
+	// render
 	graphics.renderer.render(graphics.scene, graphics.camera);
 };
 
