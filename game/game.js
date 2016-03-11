@@ -8,6 +8,8 @@ var con =
 	coin_flip_time: 0.5,
 	light_tip_time: 0.25,
 	light_cell_size: 3,
+	monster_normal_speed: 2,
+	glare_color: new THREE.Color(1, 1, 0.7),
 	collision_directions:
 	{
 		right: new THREE.Vector2(0.5, 0),
@@ -22,6 +24,17 @@ var con =
 		forward: 2,
 		backward: 3,
 	},
+	directions_with_diagonals:
+	{
+		right: 0,
+		left: 1,
+		forward: 2,
+		backward: 3,
+		right_forward: 4,
+		left_forward: 5,
+		right_backward: 6,
+		left_backward: 7,
+	},
 	max_capacity: 4,
 	masks:
 	{
@@ -30,6 +43,13 @@ var con =
 		coin: 1 << 2,
 		player: 1 << 3,
 		door: 1 << 4,
+	},
+	monster_states:
+	{
+		normal: 0,
+		chase: 1,
+		attack: 2,
+		hide: 3,
 	},
 	codes:
 	{
@@ -102,6 +122,7 @@ var graphics =
 		floor: null,
 		wall: null,
 		door: null,
+		glare: null,
 	},
 };
 
@@ -254,6 +275,12 @@ func.check_done_loading = function()
 			return false;
 	}
 
+	graphics.geom.glares = new THREE.Geometry();
+	graphics.geom.glares.vertices.push(new THREE.Vector3(0.8, 0, 2.5));
+	graphics.geom.glares.vertices.push(new THREE.Vector3(-0.8, 0, 2.5));
+	graphics.geom.glares.vertices.push(new THREE.Vector3(0, 0.8, 2.5));
+	graphics.geom.glares.vertices.push(new THREE.Vector3(0, -0.8, 2.5));
+
 	$(window).on('resize', func.on_resize);
 
 	window.focus();
@@ -358,6 +385,7 @@ func.load_level = function(level)
 	state.light_models.length = 0;
 
 	graphics.light_models.length = 0;
+	graphics.monsters.length = 0;
 	graphics.door_text.mesh = null;
 
 	if (graphics.ground)
@@ -451,6 +479,14 @@ func.parse_level_texture = function(texture)
 				light.position.set(pos.x, pos.y, 0);
 				graphics.light_models.push(light);
 
+				// candle glares
+
+				var glare_material = new THREE.PointsMaterial({ size: 35, sizeAttenuation: false, map: graphics.texture.glare, transparent: true });
+				glare_material.color.copy(con.glare_color);
+
+				var particles = new THREE.Points(graphics.geom.glares, glare_material);
+				light.add(particles);
+
 				var point_light = new THREE.PointLight(0xdd9977, 1, 5);
 				point_light.position.set(0, 0, 3.0);
 				graphics.flicker_lights.push(point_light);
@@ -463,6 +499,8 @@ func.parse_level_texture = function(texture)
 				{
 					pos: pos.clone(),
 					path: [],
+					state: con.monster_states.normal,
+					timer: 0,
 				});
 
 				var monster = func.add_mesh(graphics.geom.monster, 0x000000);
@@ -511,6 +549,144 @@ func.parse_level_texture = function(texture)
 	graphics.camera_pos.copy(graphics.camera_pos_target);
 };
 
+func.coord = function(pos)
+{
+	return new THREE.Vector2(Math.floor(pos.x), Math.floor(pos.y));
+};
+
+func.cell_hash = function(pos)
+{
+	return pos.x + (pos.y * state.size.x);
+};
+
+func.random_goal = function(start, radius)
+{
+	var points = [];
+	var visited = {};
+
+	var queue = [];
+	queue.push(start);
+
+	while (queue.length > 0)
+	{
+		var coord = queue.pop(0);
+		visited[func.cell_hash(coord)] = true;
+		points.push(coord);
+		
+		for (var dir_name in con.directions)
+		{
+			var adjacent = coord.clone();
+			func.move_dir(adjacent, con.directions[dir_name]);
+			if (adjacent.clone().sub(start).length() < radius)
+			{
+				var hash = func.cell_hash(adjacent);
+				if (!visited[hash] && state.grid[adjacent.x][adjacent.y].mask === 0)
+					queue.push(adjacent);
+			}
+		}
+	}
+	return points[Math.floor(Math.random() * points.length)];
+};
+
+func.astar = function(start, end, path)
+{
+	path.length = 0;
+
+	var queue = [];
+	queue.push(start);
+
+	var travel_scores = {};
+	var parents = {};
+	var estimate_scores = {};
+
+	var start_hash = func.cell_hash(start);
+	travel_scores[start_hash] = 0;
+	estimate_scores[start_hash] = end.clone().sub(start).length();
+
+	var end_hash = func.cell_hash(end);
+
+	var priority_sort = function(a, b)
+	{
+		var a_hash = func.cell_hash(a);
+		var b_hash = func.cell_hash(b);
+		var a_score = travel_scores[a_hash] + estimate_scores[a_hash];
+		var b_score = travel_scores[b_hash] + estimate_scores[b_hash];
+		return b_score - a_score;
+	};
+
+	while (queue.length > 0)
+	{
+		queue.sort(priority_sort);
+		var coord = queue.pop(0);
+
+		var parent_travel_score = travel_scores[func.cell_hash(coord)];
+		
+		for (var dir_name in con.directions)
+		{
+			var adjacent = coord.clone();
+			func.move_dir(adjacent, con.directions[dir_name]);
+			if (state.grid[adjacent.x][adjacent.y].mask === 0)
+			{
+				var hash = func.cell_hash(adjacent);
+				var existing_travel_score = travel_scores[hash];
+				if (hash === end_hash)
+				{
+					// reconstruct path
+					parents[hash] = coord;
+					var current = adjacent;
+					while (current)
+					{
+						path.splice(0, 0, current);
+						current = parents[func.cell_hash(current)];
+					}
+
+					// simplify path
+					for (var i = 1; i < path.length - 1; i++)
+					{
+						var coord = path[i];
+						var adjacent_obstacle = false;
+						for (var dir_name in con.directions_with_diagonals)
+						{
+							var adjacent = coord.clone();
+							func.move_dir(adjacent, con.directions[dir_name]);
+							if (state.grid[adjacent.x][adjacent.y].mask !== 0)
+							{
+								adjacent_obstacle = true;
+								break;
+							}
+						}
+
+						if (!adjacent_obstacle)
+						{
+							// no obstacles around waypoint; remove it
+							path.splice(i, 1);
+							i--;
+						}
+					}
+					return true;
+				}
+				else
+				{
+					var travel_score = parent_travel_score + 1;
+					if (typeof existing_travel_score === 'undefined')
+					{
+						parents[hash] = coord;
+						travel_scores[hash] = travel_score;
+						estimate_scores[hash] = end.clone().sub(adjacent).length();
+						queue.push(adjacent);
+					}
+					else if (existing_travel_score > parent_travel_score + 1)
+					{
+						parents[hash] = coord;
+						travel_scores[hash] = travel_score;
+					}
+				}
+			}
+		}
+	}
+	return false;
+};
+
 func.add_mesh = function(geometry, color, materials, parent)
 {
 	var material;
@@ -541,8 +717,15 @@ func.flicker_light = function(light, i, scale)
 {
 	if (typeof scale === 'undefined')
 		scale = 1.0;
-	var intensity = light.intensity = scale * (0.98 + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * 0.02);
+	var intensity = light.intensity = scale * func.flicker(i);
 	light.distance = 5.0 * intensity;
+};
+
+func.flicker = function(i, amount)
+{
+	if (typeof amount === 'undefined')
+		amount = 0.02;
+	return (1 - amount) + Math.sin((global.clock.getElapsedTime() + i) * 40.0) * amount;
 };
 
 func.collides = function(pos, x, y)
@@ -591,6 +774,22 @@ func.move_dir = function(pos, dir)
 		case con.directions.backward:
 			pos.y -= 1;
 			break;
+		case con.directions.right_forward:
+			pos.x += 1;
+			pos.y += 1;
+			break;
+		case con.directions.left_forward:
+			pos.x -= 1;
+			pos.y += 1;
+			break;
+		case con.directions.right_backward:
+			pos.x += 1;
+			pos.y -= 1;
+			break;
+		case con.directions.left_backward:
+			pos.x -= 1;
+			pos.y -= 1;
+			break;
 	}
 };
 
@@ -617,11 +816,10 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 			speed = speed_max;
 		}
 
-		var coord_x = Math.floor(position.x);
-		var coord_y = Math.floor(position.y);
-		for (var x = coord_x - 1; x < coord_x + 2; x++)
+		var coord = func.coord(position);
+		for (var x = coord.x - 1; x < coord.x + 2; x++)
 		{
-			for (var y = coord_y - 1; y < coord_y + 2; y++)
+			for (var y = coord.y - 1; y < coord.y + 2; y++)
 			{
 				var cell = state.grid[x][y];
 				if (x >= 0 && x < state.size.x
@@ -752,6 +950,27 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 	return collided_mask;
 };
 
+func.monster_move = function(monster, speed, dt)
+{
+	if (monster.path.length > 0)
+	{
+		var cell = monster.path[0];
+		var to_cell = cell.clone().sub(monster.pos);
+		if (to_cell.length() < 0.25)
+		{
+			// move on to the next waypoint
+			monster.path.splice(0, 1);
+			func.monster_move(monster, speed, dt);
+		}
+		else
+		{
+			to_cell.normalize();
+			to_cell.multiplyScalar(dt * speed);
+			monster.pos.add(to_cell);
+		}
+	}
+};
+
 func.update = function()
 {
 	requestAnimationFrame(func.update);
@@ -783,10 +1002,13 @@ func.update = function()
 		var ray_end = new THREE.Vector3(ray[3], ray[4], ray[5]);
 		var d = ray_start.z / (ray_start.z - ray_end.z);
 
-		var target_x = ray_start.x + (ray_end.x - ray_start.x) * d;
-		var target_y = ray_start.y + (ray_end.y - ray_start.y) * d;
+		var target = new THREE.Vector2
+		(
+			ray_start.x + (ray_end.x - ray_start.x) * d,
+			ray_start.y + (ray_end.y - ray_start.y) * d
+		);
 
-		player_velocity.set(target_x - state.player.pos.x, target_y - state.player.pos.y);
+		player_velocity.copy(target).sub(state.player.pos);
 		graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
 		var coin_multiplier = 0.6 + (0.4 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
 		player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
@@ -891,6 +1113,30 @@ func.update = function()
 		graphics.player_coins.length--;
 	}
 
+	// monsters
+	for (var i = 0; i < state.monsters.length; i++)
+	{
+		var monster = state.monsters[i];
+		var graphic = graphics.monsters[i];
+		switch (monster.state)
+		{
+			case con.monster_states.normal:
+				if (monster.path.length === 0)
+				{
+					monster.timer -= dt;
+					if (monster.timer < 0.0)
+					{
+						var coord = func.coord(monster.pos);
+						func.astar(coord, func.random_goal(coord, 10), monster.path);
+						monster.timer = 0.5 + Math.random() * 3.0;
+					}
+				}
+				func.monster_move(monster, con.monster_normal_speed, dt);
+				break;
+		}
+		graphic.position.set(monster.pos.x, monster.pos.y, 0);
+	}
+
 	// door text
 	if (graphics.door
 		&& (graphics.door_text.bank_coins !== state.bank_coins || graphics.door_text.door_coins !== state.door_coins))
@@ -900,11 +1146,19 @@ func.update = function()
 	for (var i = 0; i < state.light_models.length; i++)
 	{
 		var light_model = state.light_models[i];
+		var graphic = graphics.light_models[i];
+
+		if (light_model.on)
+		{
+			var glares = graphic.children[0];
+			glares.material.color.copy(con.glare_color);
+			glares.material.color.multiplyScalar(func.flicker(i, 0.05));
+		}
+
 		if (light_model.anim_time < con.light_tip_time)
 		{
 			light_model.anim_time = Math.min(light_model.anim_time + dt, con.light_tip_time);
 			var blend = light_model.anim_time / con.light_tip_time;
-			var graphic = graphics.light_models[i];
 			// rotate the model
 			switch (light_model.anim_dir)
 			{
@@ -924,8 +1178,10 @@ func.update = function()
 			if (blend == 1.0)
 			{
 				// kill the light
-				var point_light = graphic.children[0];
+				var point_light = graphic.children[1];
 				point_light.color.set(0, 0, 0);
+				var glares = graphic.children[0];
+				graphic.remove(glares);
 			}
 		}
 	}
