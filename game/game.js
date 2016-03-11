@@ -38,13 +38,15 @@ var con =
 		coin: [0, 255, 0],
 		player: [255, 255, 0],
 		door: [0, 255, 255],
+		monster: [255, 0, 255],
 	},
-	speed_multiplier: 1.0,
+	speed_multiplier: 2.0,
 	speed_max: 5,
 };
 
 var state =
 {
+	font: null,
 	level: 0,
 	grid: null,
 	size: new THREE.Vector2(),
@@ -53,6 +55,7 @@ var state =
 	bank_coins: 0,
 	coins: [],
 	light_models: [],
+	monsters: [],
 	player:
 	{
 		pos: new THREE.Vector2(),
@@ -65,11 +68,18 @@ var graphics =
 {
 	texture_loader: new THREE.TextureLoader(),
 	model_loader: new THREE.JSONLoader(),
+	door_text:
+	{
+		bank_coins: 0,
+		door_coins: 0,
+		mesh: null,
+	},
 	scene: null,
 	camera: null,
 	renderer: null,
 	scenery: [],
 	flicker_lights: [],
+	monsters: [],
 	light_models: [],
 	coins: [],
 	player_coins: [],
@@ -102,7 +112,7 @@ var global =
 	mouse_down: false,
 };
 
-// Three.js extensions
+// three.js extensions
 
 THREE.FloorGeometry = function(width, height)
 {
@@ -219,10 +229,19 @@ func.init = function()
 			func.error
 		);
 	}
+
+	new THREE.FontLoader().load('helvetiker_bold.typeface.js', function (response)
+	{
+		graphics.font = response;
+		func.check_done_loading();
+	});
 };
 
 func.check_done_loading = function()
 {
+	if (!graphics.font)
+		return false;
+
 	for (var name in graphics.geom)
 	{
 		if (!graphics.geom[name])
@@ -293,15 +312,14 @@ func.on_mouseup = function(event)
 
 func.create_value_text = function(value, parent)
 {
-	var value_string = Math.pow(2, value).toString();
-	var scale = value_string.length === 1 ? 1.0 : 1.5 / value_string.length;
-	var text_geometry = new THREE.TextGeometry(value_string,
+	var scale = value.length === 1 ? 1.0 : 1.5 / value.length;
+	var text_geometry = new THREE.TextGeometry(value,
 	{
-		size: 0.6 * scale,
+		size: 1.0 * scale,
 		height: 0.1,
 		curveSegments: 2,
 
-		font: 'helvetiker',
+		font: graphics.font,
 		weight: 'bold',
 		style: 'normal',
 
@@ -312,13 +330,21 @@ func.create_value_text = function(value, parent)
 		material: 0,
 		extrudeMaterial: 0
 	});
-	var text = func.add_mesh(text_geometry, 0xffffff, null, parent);
+	var text = func.add_mesh(text_geometry, 0xff0000, null, parent);
 	text_geometry.computeBoundingBox();
-	text.position.z = 0.5;
+	text.position.z = 1.05;
 	text.position.x = -0.05 - 0.5 * (text_geometry.boundingBox.max.x - text_geometry.boundingBox.min.x);
 	text.position.y = -0.5 * (text_geometry.boundingBox.max.y - text_geometry.boundingBox.min.y);
-	text.value = value;
 	return text;
+};
+
+func.refresh_door_text = function()
+{
+	if (graphics.door_text.mesh)
+		graphics.door.remove(graphics.door_text.mesh);
+	graphics.door_text.mesh = func.create_value_text(state.bank_coins + ' / ' + state.door_coins, graphics.door);
+	graphics.door_text.bank_coins = state.bank_coins;
+	graphics.door_text.door_coins = state.door_coins;
 };
 
 func.load_level = function(level)
@@ -329,8 +355,10 @@ func.load_level = function(level)
 	state.grid = null;
 	state.coins.length = 0;
 	state.bank_coins = 0;
+	state.light_models.length = 0;
 
 	graphics.light_models.length = 0;
+	graphics.door_text.mesh = null;
 
 	if (graphics.ground)
 	{
@@ -429,23 +457,38 @@ func.parse_level_texture = function(texture)
 				light.add(point_light);
 
 			}
+			else if (pixel_equals(offset, con.codes.monster))
+			{
+				state.monsters.push(
+				{
+					pos: pos.clone(),
+					path: [],
+				});
+
+				var monster = func.add_mesh(graphics.geom.monster, 0x000000);
+				monster.position.set(pos.x, pos.y, 0);
+				graphics.scenery.push(monster);
+				graphics.monsters.push(monster);
+			}
 			else if (pixel_equals(offset, con.codes.player))
 				state.player.pos.copy(pos);
 			else if (canvas_data.data[offset] < 255
 				&& canvas_data.data[offset + 1] === con.codes.door[1]
 				&& canvas_data.data[offset + 2] === con.codes.door[2])
 			{
-				var door = func.add_mesh(graphics.geom.door, 0xcccc44);
-				graphics.scenery.push(door);
-				door.position.set(pos.x, pos.y, 0);
+				graphics.door = func.add_mesh(graphics.geom.door, 0xcccc44);
+				graphics.scenery.push(graphics.door);
+				graphics.door.position.set(pos.x, pos.y, 0);
 
 				state.door.set(x, y);
 				state.door_coins = canvas_data.data[offset];
 
 				var point_light = new THREE.PointLight(0xffffff, 1, 5);
 				point_light.position.set(0, 0, 3.0);
-				door.add(point_light);
+				graphics.door.add(point_light);
 				grid_value.mask = con.masks.door;
+
+				func.refresh_door_text();
 			}
 			else if (pixel_equals(offset, con.codes.coin))
 			{
@@ -553,6 +596,7 @@ func.move_dir = function(pos, dir)
 
 func.move_body = function(position, velocity, dt, speed_max, mask)
 {
+	var original_position = position.clone();
 	if (typeof speed_max === 'undefined')
 		speed_max = con.speed_max;
 	if (typeof mask === 'undefined')
@@ -636,6 +680,13 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 							velocity.add(corner_to_body_normalized);
 
 							collided_mask |= cell.mask;
+
+							collision = true;
+							var to_cell = new THREE.Vector2(x, y).sub(position);
+							if (Math.abs(to_cell.x) > Math.abs(to_cell.y))
+								collision_dir = to_cell.x < 0 ? con.directions.left : con.directions.right;
+							else
+								collision_dir = to_cell.y < 0 ? con.directions.backward : con.directions.forward;
 						}
 					}
 
@@ -686,10 +737,16 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 		var new_speed = velocity.length();
 		if (new_speed > 1.0)
 		{
-			velocity.multiplyScalar(speed / new_speed);
-			var final_velocity = velocity.clone();
-			final_velocity.multiplyScalar(dt);
-			position.add(final_velocity);
+			var moved = position.clone().sub(original_position);
+			var velocity_normalized = velocity.clone();
+			velocity_normalized.normalize();
+
+			var moved_along_velocity = moved.dot(velocity_normalized) / dt;
+			var velocity_adjustment = speed - moved_along_velocity;
+			velocity_normalized.multiplyScalar(velocity_adjustment);
+			velocity.add(velocity_normalized);
+			velocity_normalized.multiplyScalar(dt);
+			position.add(velocity_normalized);
 		}
 	}
 	return collided_mask;
@@ -731,7 +788,7 @@ func.update = function()
 
 		player_velocity.set(target_x - state.player.pos.x, target_y - state.player.pos.y);
 		graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
-		var coin_multiplier = 0.5 + (0.5 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
+		var coin_multiplier = 0.6 + (0.4 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
 		player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
 		var mask;
 		if (state.bank_coins < state.door_coins)
@@ -764,6 +821,7 @@ func.update = function()
 	for (var i = 0; i < state.coins.length; i++)
 	{
 		var coin = state.coins[i];
+		var graphic = graphics.coins[i];
 		var diff = coin.pos.clone().sub(state.player.pos);
 		if (diff.length() < 1)
 		{
@@ -780,19 +838,19 @@ func.update = function()
 			else
 			{
 				// push coin around
-				var coin_velocity = diff.clone();
 				diff.normalize();
 				var dot = player_velocity.dot(diff);
 				if (dot > 0.0)
 				{
+					var coin_velocity = diff.clone();
 					coin_velocity.multiplyScalar(dot);
 					func.move_body(coin.pos, coin_velocity, dt);
-					graphics.coins[i].position.set(coin.pos.x, coin.pos.y, 0);
+					graphic.position.set(coin.pos.x, coin.pos.y, 0);
 				}
 			}
 		}
 		else
-			graphics.coins[i].position.set(coin.pos.x, coin.pos.y, 0);
+			graphic.position.set(coin.pos.x, coin.pos.y, 0);
 	}
 	while (graphics.coins.length > state.coins.length)
 	{
@@ -833,6 +891,11 @@ func.update = function()
 		graphics.player_coins.length--;
 	}
 
+	// door text
+	if (graphics.door
+		&& (graphics.door_text.bank_coins !== state.bank_coins || graphics.door_text.door_coins !== state.door_coins))
+		func.refresh_door_text();
+
 	// lights
 	for (var i = 0; i < state.light_models.length; i++)
 	{
@@ -862,7 +925,7 @@ func.update = function()
 			{
 				// kill the light
 				var point_light = graphic.children[0];
-				graphic.remove(point_light);
+				point_light.color.set(0, 0, 0);
 			}
 		}
 	}
