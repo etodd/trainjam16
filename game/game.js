@@ -205,6 +205,8 @@ var global =
 	clock: new THREE.Clock(),
 	mouse: new THREE.Vector2(),
 	mouse_down: false,
+	button_down: false,
+	last_button_down: false,
 	last_mouse_down: false,
 	footstep_counter: 0,
 };
@@ -1327,11 +1329,40 @@ func.cell_is_far_from_player = function(cell)
 	return cell.clone().sub(state.player.pos).length() > 12;
 };
 
+func.gamepad = function()
+{
+	if (navigator.getGamepads)
+	{
+		var gamepads = navigator.getGamepads();
+		if (gamepads.length > 0)
+		{
+			var gamepad = gamepads[0];
+			if (gamepad.connected)
+				return gamepad;
+		}
+	}
+	return null;
+};
+
 func.update = function()
 {
 	requestAnimationFrame(func.update);
 
 	var dt = global.clock.getDelta();
+
+	global.button_down = false;
+	var gamepad = func.gamepad();
+	if (gamepad)
+	{
+		for (var i = 0; i < gamepad.buttons.length; i++)
+		{
+			if (gamepad.buttons[i].pressed)
+			{
+				global.button_down = true;
+				break;
+			}
+		}
+	}
 
 	global.level_timer += dt;
 
@@ -1378,16 +1409,11 @@ func.update = function()
 		}
 
 		// gamepad controls
-		if (navigator.getGamepads)
+		if (gamepad)
 		{
-			var gamepads = navigator.getGamepads();
-			if (gamepads.length > 0)
-			{
-				var gamepad = gamepads[0];
-				var stick = new THREE.Vector2(gamepad.axes[0], gamepad.axes[1]);
-				if (stick.lengthSq() > 0)
-					player_velocity.copy(stick).multiplyScalar(con.speed_max / Math.max(1, player_velocity.length()));
-			}
+			var stick = new THREE.Vector2(gamepad.axes[0], -gamepad.axes[1]);
+			if (stick.length() > 0.1)
+				player_velocity.copy(stick).multiplyScalar(con.speed_max / Math.max(1, stick.length()));
 		}
 
 		// apply movement
@@ -1783,7 +1809,8 @@ func.update = function()
 			graphics.msg = null;
 		}
 	}
-	else if (!state.player.alive && global.mouse_down && !global.last_mouse_down)
+	else if (!state.player.alive &&
+		((global.mouse_down && !global.last_mouse_down) || (global.button_down && !global.last_button_down)))
 	{
 		// player is dead, msg timer is up, and player is clicking
 		// time to transition levels
@@ -1807,6 +1834,7 @@ func.update = function()
 		graphics.player.visible = false;
 
 	global.last_mouse_down = global.mouse_down;
+	global.last_button_down = global.button_down;
 
 	// overlay
 	if (global.level_timer < con.fade_time)
