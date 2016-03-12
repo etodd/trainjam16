@@ -1,0 +1,8 @@
+#!/bin/bash
+
+set -u
+set -e
+set -o pipefail
+
+echo 'game/game.min.js'
+uglifyjs -mt --compress -- game/game.js > game/game.min.js

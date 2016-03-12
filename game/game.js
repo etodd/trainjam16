@@ -218,6 +218,336 @@ var global =
 
 // three.js extensions
 
+/**
+ * @author zz85 / http://www.lab4games.net/zz85/blog
+ * @author alteredq / http://alteredqualia.com/
+ *
+ * Text = 3D Text
+ *
+ * parameters = {
+ *  font: <THREE.Font>, // font
+ *
+ *  size: <float>, // size of the text
+ *  height: <float>, // thickness to extrude text
+ *  curveSegments: <int>, // number of points on the curves
+ *
+ *  bevelEnabled: <bool>, // turn on bevel
+ *  bevelThickness: <float>, // how deep into text bevel goes
+ *  bevelSize: <float> // how far from text outline is bevel
+ * }
+ */
+
+THREE.TextGeometry = function ( text, parameters ) {
+
+	parameters = parameters || {};
+
+	var font = parameters.font;
+
+	if ( font instanceof THREE.Font === false ) {
+
+		console.error( 'THREE.TextGeometry: font parameter is not an instance of THREE.Font.' );
+		return new THREE.Geometry();
+
+	}
+
+	var shapes = font.generateShapes( text, parameters.size, parameters.curveSegments );
+
+	// translate parameters to ExtrudeGeometry API
+
+	parameters.amount = parameters.height !== undefined ? parameters.height : 50;
+
+	// defaults
+
+	if ( parameters.bevelThickness === undefined ) parameters.bevelThickness = 10;
+	if ( parameters.bevelSize === undefined ) parameters.bevelSize = 8;
+	if ( parameters.bevelEnabled === undefined ) parameters.bevelEnabled = false;
+
+	THREE.ExtrudeGeometry.call( this, shapes, parameters );
+
+	this.type = 'TextGeometry';
+
+};
+
+THREE.TextGeometry.prototype = Object.create( THREE.ExtrudeGeometry.prototype );
+THREE.TextGeometry.prototype.constructor = THREE.TextGeometry;
+
+/**
+ * @author zz85 / http://www.lab4games.net/zz85/blog
+ * @author alteredq / http://alteredqualia.com/
+ *
+ * For Text operations in three.js (See TextGeometry)
+ *
+ * It uses techniques used in:
+ *
+ *	Triangulation ported from AS3
+ *		Simple Polygon Triangulation
+ *		http://actionsnippet.com/?p=1462
+ *
+ * 	A Method to triangulate shapes with holes
+ *		http://www.sakri.net/blog/2009/06/12/an-approach-to-triangulating-polygons-with-holes/
+ *
+ */
+
+THREE.FontUtils = {
+
+	faces: {},
+
+	// Just for now. face[weight][style]
+
+	face: 'helvetiker',
+	weight: 'normal',
+	style: 'normal',
+	size: 150,
+	divisions: 10,
+
+	getFace: function () {
+
+		try {
+
+			return this.faces[ this.face.toLowerCase() ][ this.weight ][ this.style ];
+
+		} catch ( e ) {
+
+			throw "The font " + this.face + " with " + this.weight + " weight and " + this.style + " style is missing."
+
+		}
+
+	},
+
+	loadFace: function ( data ) {
+
+		var family = data.familyName.toLowerCase();
+
+		var ThreeFont = this;
+
+		ThreeFont.faces[ family ] = ThreeFont.faces[ family ] || {};
+
+		ThreeFont.faces[ family ][ data.cssFontWeight ] = ThreeFont.faces[ family ][ data.cssFontWeight ] || {};
+		ThreeFont.faces[ family ][ data.cssFontWeight ][ data.cssFontStyle ] = data;
+
+		ThreeFont.faces[ family ][ data.cssFontWeight ][ data.cssFontStyle ] = data;
+
+		return data;
+
+	},
+
+	drawText: function ( text ) {
+
+		// RenderText
+
+		var i,
+			face = this.getFace(),
+			scale = this.size / face.resolution,
+			offset = 0,
+			chars = String( text ).split( '' ),
+			length = chars.length;
+
+		var fontPaths = [];
+
+		for ( i = 0; i < length; i ++ ) {
+
+			var path = new THREE.Path();
+
+			var ret = this.extractGlyphPoints( chars[ i ], face, scale, offset, path );
+			offset += ret.offset;
+
+			fontPaths.push( ret.path );
+
+		}
+
+		// get the width
+
+		var width = offset / 2;
+		//
+		// for ( p = 0; p < allPts.length; p++ ) {
+		//
+		// 	allPts[ p ].x -= width;
+		//
+		// }
+
+		//var extract = this.extractPoints( allPts, characterPts );
+		//extract.contour = allPts;
+
+		//extract.paths = fontPaths;
+		//extract.offset = width;
+
+		return { paths: fontPaths, offset: width };
+
+	},
+
+
+
+
+	extractGlyphPoints: function ( c, face, scale, offset, path ) {
+
+		var pts = [];
+
+		var b2 = THREE.ShapeUtils.b2;
+		var b3 = THREE.ShapeUtils.b3;
+
+		var i, i2, divisions,
+			outline, action, length,
+			scaleX, scaleY,
+			x, y, cpx, cpy, cpx0, cpy0, cpx1, cpy1, cpx2, cpy2,
+			laste,
+			glyph = face.glyphs[ c ] || face.glyphs[ '?' ];
+
+		if ( ! glyph ) return;
+
+		if ( glyph.o ) {
+
+			outline = glyph._cachedOutline || ( glyph._cachedOutline = glyph.o.split( ' ' ) );
+			length = outline.length;
+
+			scaleX = scale;
+			scaleY = scale;
+
+			for ( i = 0; i < length; ) {
+
+				action = outline[ i ++ ];
+
+				//console.log( action );
+
+				switch ( action ) {
+
+				case 'm':
+
+					// Move To
+
+					x = outline[ i ++ ] * scaleX + offset;
+					y = outline[ i ++ ] * scaleY;
+
+					path.moveTo( x, y );
+					break;
+
+				case 'l':
+
+					// Line To
+
+					x = outline[ i ++ ] * scaleX + offset;
+					y = outline[ i ++ ] * scaleY;
+					path.lineTo( x, y );
+					break;
+
+				case 'q':
+
+					// QuadraticCurveTo
+
+					cpx  = outline[ i ++ ] * scaleX + offset;
+					cpy  = outline[ i ++ ] * scaleY;
+					cpx1 = outline[ i ++ ] * scaleX + offset;
+					cpy1 = outline[ i ++ ] * scaleY;
+
+					path.quadraticCurveTo( cpx1, cpy1, cpx, cpy );
+
+					laste = pts[ pts.length - 1 ];
+
+					if ( laste ) {
+
+						cpx0 = laste.x;
+						cpy0 = laste.y;
+
+						for ( i2 = 1, divisions = this.divisions; i2 <= divisions; i2 ++ ) {
+
+							var t = i2 / divisions;
+							b2( t, cpx0, cpx1, cpx );
+							b2( t, cpy0, cpy1, cpy );
+
+						}
+
+					}
+
+					break;
+
+				case 'b':
+
+					// Cubic Bezier Curve
+
+					cpx  = outline[ i ++ ] * scaleX + offset;
+					cpy  = outline[ i ++ ] * scaleY;
+					cpx1 = outline[ i ++ ] * scaleX + offset;
+					cpy1 = outline[ i ++ ] * scaleY;
+					cpx2 = outline[ i ++ ] * scaleX + offset;
+					cpy2 = outline[ i ++ ] * scaleY;
+
+					path.bezierCurveTo( cpx1, cpy1, cpx2, cpy2, cpx, cpy );
+
+					laste = pts[ pts.length - 1 ];
+
+					if ( laste ) {
+
+						cpx0 = laste.x;
+						cpy0 = laste.y;
+
+						for ( i2 = 1, divisions = this.divisions; i2 <= divisions; i2 ++ ) {
+
+							var t = i2 / divisions;
+							b3( t, cpx0, cpx1, cpx2, cpx );
+							b3( t, cpy0, cpy1, cpy2, cpy );
+
+						}
+
+					}
+
+					break;
+
+				}
+
+			}
+
+		}
+
+
+
+		return { offset: glyph.ha * scale, path: path };
+
+	}
+
+};
+
+
+THREE.FontUtils.generateShapes = function ( text, parameters ) {
+
+	// Parameters
+
+	parameters = parameters || {};
+
+	var size = parameters.size !== undefined ? parameters.size : 100;
+	var curveSegments = parameters.curveSegments !== undefined ? parameters.curveSegments : 4;
+
+	var font = parameters.font !== undefined ? parameters.font : 'helvetiker';
+	var weight = parameters.weight !== undefined ? parameters.weight : 'normal';
+	var style = parameters.style !== undefined ? parameters.style : 'normal';
+
+	THREE.FontUtils.size = size;
+	THREE.FontUtils.divisions = curveSegments;
+
+	THREE.FontUtils.face = font;
+	THREE.FontUtils.weight = weight;
+	THREE.FontUtils.style = style;
+
+	// Get a Font data json object
+
+	var data = THREE.FontUtils.drawText( text );
+
+	var paths = data.paths;
+	var shapes = [];
+
+	for ( var p = 0, pl = paths.length; p < pl; p ++ ) {
+
+		Array.prototype.push.apply( shapes, paths[ p ].toShapes() );
+
+	}
+
+	return shapes;
+
+};
+
+// To use the typeface.js face files, hook up the API
+
+THREE.typeface_js = { faces: THREE.FontUtils.faces, loadFace: THREE.FontUtils.loadFace };
+if ( typeof self !== 'undefined' ) self._typeface_js = THREE.typeface_js;
+
 THREE.FloorGeometry = function(width, height)
 {
 	THREE.BufferGeometry.call(this);
@@ -345,7 +675,7 @@ func.msg = function(msg)
 		graphics.msg = null;
 };
 
-func.load_audio = function(url, callback)
+func.load_audio = function(url, snds, snd_index, callback)
 {
 	var request = new XMLHttpRequest();
 	request.open('GET', url, true);
@@ -363,7 +693,8 @@ func.load_audio = function(url, callback)
 					console.log('error decoding file data: ' + url);
 					return;
 				}
-				callback(buffer);
+				snds[snd_index] = buffer;
+				callback();
 			},
 			function(error)
 			{
@@ -378,6 +709,17 @@ func.load_audio = function(url, callback)
 	};
 
 	request.send();
+};
+
+func.load_geom = function(geom_name)
+{
+	global.load_total++;
+	graphics.model_loader.load('geom/' + geom_name + '.js', function(geometry, materials)
+	{
+		graphics.geom[geom_name] = geometry;
+		global.load_count++;
+		func.check_done_loading();
+	});
 };
 
 func.init = function()
@@ -424,7 +766,7 @@ func.init = function()
 		graphics.load_bar.position.z = -1;
 		graphics.load_bar.scale.set(0, con.load_bar_size.y, 1);
 		graphics.ui.add(graphics.load_bar);
-		graphics.load_bar_background = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xaaaaaa, }));
+		graphics.load_bar_background = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x666666, }));
 		graphics.load_bar_background.position.z = -2;
 		graphics.load_bar_background.scale.set(con.load_bar_size.x, con.load_bar_size.y, 1);
 		graphics.ui.add(graphics.load_bar_background);
@@ -444,28 +786,17 @@ func.init = function()
 	func.on_resize();
 
 	for (var geom_name in graphics.geom)
-	{
-		global.load_total++;
-		let local_geom_name = geom_name;
-		graphics.model_loader.load('geom/' + geom_name + '.js', function(geometry, materials)
-		{
-			global.load_count++;
-			graphics.geom[local_geom_name] = geometry;
-			func.check_done_loading();
-		});
-	}
+		func.load_geom(geom_name);
 
 	for (var texture_name in graphics.texture)
 	{
 		global.load_total++;
-		let local_texture_name = texture_name;
-		graphics.texture_loader.load
+		graphics.texture[texture_name] = graphics.texture_loader.load
 		(
 			'texture/' + texture_name + '.png',
 			function(texture)
 			{
 				texture.minFilter = texture.magFilter = THREE.NearestFilter;
-				graphics.texture[local_texture_name] = texture;
 				global.load_count++;
 				func.check_done_loading();
 			},
@@ -476,13 +807,11 @@ func.init = function()
 	for (var level_name in graphics.level)
 	{
 		global.load_total++;
-		let local_level_name = level_name;
-		graphics.texture_loader.load
+		graphics.level[level_name] = graphics.texture_loader.load
 		(
 			'lvl/' + level_name + '.png',
 			function(texture)
 			{
-				graphics.level[local_level_name] = texture;
 				global.load_count++;
 				func.check_done_loading();
 			},
@@ -504,15 +833,13 @@ func.init = function()
 	var sounds = [];
 	for (var snd_name in con.audio)
 	{
-		let snds = con.audio[snd_name];
+		var snds = con.audio[snd_name];
 		for (var i = 0; i < snds.length; i++)
 		{
-			let snd_index = i;
 			var url = snds[i];
 			global.load_total++;
-			func.load_audio(url, function(buffer)
+			func.load_audio(url, snds, i, function(buffer)
 			{
-				snds[snd_index] = buffer;
 				global.load_count++;
 				func.check_done_loading();
 			});
@@ -698,6 +1025,23 @@ func.refresh_door_text = function()
 	graphics.door_text.door_coins = state.door_coins;
 };
 
+func.monster_spawn = function(pos)
+{
+	state.monsters.push(
+	{
+		pos: pos.clone(),
+		path: [],
+		state: con.monster_states.normal,
+		timer: 0, // used for interval stuff like recalculating paths every x seconds
+		timer2: 0, // used for accumulative stuff, like a vision timer before the monster is alerted
+	});
+
+	var monster = func.add_mesh(graphics.geom.monster, 0x000000);
+	monster.position.set(pos.x, pos.y, 0);
+	graphics.scenery.push(monster);
+	graphics.monsters.push(monster);
+};
+
 func.load_level = function(level)
 {
 	// unload old stuff
@@ -812,21 +1156,7 @@ func.load_level = function(level)
 
 			}
 			else if (pixel_equals(offset, con.codes.monster))
-			{
-				state.monsters.push(
-				{
-					pos: pos.clone(),
-					path: [],
-					state: con.monster_states.normal,
-					timer: 0, // used for interval stuff like recalculating paths every x seconds
-					timer2: 0, // used for accumulative stuff, like a vision timer before the monster is alerted
-				});
-
-				var monster = func.add_mesh(graphics.geom.monster, 0x000000);
-				monster.position.set(pos.x, pos.y, 0);
-				graphics.scenery.push(monster);
-				graphics.monsters.push(monster);
-			}
+				func.monster_spawn(pos);
 			else if (pixel_equals(offset, con.codes.player))
 				state.player.pos.copy(pos);
 			else if (canvas_data.data[offset] < 255
@@ -920,18 +1250,17 @@ func.random_goal = function(start, radius, filter)
 				if (!visited[hash] && state.grid[adjacent.x][adjacent.y].mask === 0)
 				{
 					queue.push(adjacent);
-					points.push(adjacent);
+					if (typeof filter === 'undefined' || filter(adjacent))
+						points.push(adjacent);
 				}
 			}
 		}
 	}
 
-	while (true)
-	{
-		var point = points[Math.floor(Math.random() * points.length)];
-		if (typeof filter === 'undefined' || filter(point))
-			return point;
-	}
+	if (points.length === 0)
+		return null;
+	else
+		return points[Math.floor(Math.random() * points.length)];
 };
 
 func.astar = function(start, end, path)
@@ -1147,7 +1476,6 @@ func.move_dir = function(pos, dir)
 
 func.move_body = function(position, velocity, dt, speed_max, mask, tip_lights)
 {
-	var original_position = position.clone();
 	if (typeof speed_max === 'undefined')
 		speed_max = con.speed_max;
 	if (typeof mask === 'undefined')
@@ -1331,6 +1659,11 @@ func.cell_is_far_from_player = function(cell)
 	return cell.clone().sub(state.player.pos).length() > 12;
 };
 
+func.cell_is_very_far_from_player = function(cell)
+{
+	return cell.clone().sub(state.player.pos).length() > 20;
+};
+
 func.gamepad = function()
 {
 	if (navigator.getGamepads)
@@ -1450,6 +1783,13 @@ func.update = function()
 					func.audio(con.audio.coins);
 					state.bank_coins += state.player.coins.length;
 					state.player.coins.length = 0;
+
+					var spawn_point = func.random_goal(state.player.pos, 50, func.cell_is_very_far_from_player);
+					if (spawn_point !== null)
+					{
+						func.monster_spawn(spawn_point);
+						func.msg('+1 MONSTER');
+					}
 				}
 
 				// footsteps
@@ -1459,7 +1799,7 @@ func.update = function()
 					global.footstep_counter += Math.max(1, speed) * dt;
 					if (global.footstep_counter > 1.5)
 					{
-						func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.3));
+						func.audio(con.audio.footstep, Math.max(0.1, (speed / current_speed_max) * 0.4));
 						global.footstep_counter = 0;
 					}
 				}
@@ -1568,7 +1908,6 @@ func.update = function()
 			graphics.player_coins.length--;
 		}
 
-		// todo: monster loop sound
 		// monsters
 		var closest_monster = -1;
 		for (var i = 0; i < state.monsters.length; i++)
@@ -1664,6 +2003,7 @@ func.update = function()
 									// they're dead
 									state.player.alive = false;
 									func.msg('YOU DIED');
+									monster.rotation = 0;
 									monster.state = con.monster_states.normal;
 									monster.path.length = 0;
 									monster.timer = 3.0;
@@ -1677,6 +2017,7 @@ func.update = function()
 						else if (monster.timer < -con.monster_post_attack_delay)
 						{
 							// attack is done
+							monster.rotation = 0;
 							monster.state = state.player.alive ? con.monster_states.chase : con.monster_states.normal;
 							monster.timer = 0;
 							monster.path.length = 0;
@@ -1710,6 +2051,19 @@ func.update = function()
 					break;
 			}
 			graphic.position.set(monster.pos.x, monster.pos.y, 0);
+			if (monster.state === con.monster_states.attack)
+			{
+				if (monster.timer > 0)
+					graphic.rotation.z = 0;
+				else
+					graphic.rotation.z = (monster.timer / -con.monster_post_attack_delay) * Math.PI * 2.0;
+				graphic.scale.set(con.monster_damage_radius / 0.77, con.monster_damage_radius / 0.77, 1);
+			}
+			else
+			{
+				graphic.rotation.z = 0;
+				graphic.scale.set(1, 1, 1);
+			}
 		}
 		if (closest_monster > 0)
 			global.monster_loop_gain.gain.value = Math.max(0, 0.25 * (1.0 - (closest_monster / (con.camera_size * 0.75))));

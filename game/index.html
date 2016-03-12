@@ -1,8 +1,17 @@
 <!DOCTYPE html>
 <html>
 	<head>
-		<meta http-equiv="Content-Security-Policy" content="connect-src *; style-src *; media-src *; script-src * 'unsafe-inline' 'unsafe-eval' data:;">
+		<meta http-equiv="Content-Security-Policy" content="connect-src *; style-src 'unsafe-inline'; media-src *; script-src * 'unsafe-inline' 'unsafe-eval' data:;">
 		<title>Haunted Heist</title>
+		<style>
+			html, body, canvas
+			{
+				padding: 0px !important;
+				border: 0px !important;
+				margin: 0px !important;
+				overflow: hidden !important;
+			}
+		</style>
 		<script id="vertex_shader_unlit" type="x-shader/x-vertex">
 			void main()
 			{
@@ -18,10 +27,7 @@
 		</script>
 		<script src="lib/sprint.min.js"></script>
 		<script src="lib/three.min.js"></script>
-		<script src="lib/TextGeometry.js"></script>
-		<script src="lib/FontUtils.js"></script>
-		<link href="style.css" rel="stylesheet" type="text/css" />
-		<script src="game.js"></script>
+		<script src="game.min.js"></script>
 	</head>
 	<body>
 	</body>
