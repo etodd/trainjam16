@@ -9,18 +9,19 @@ var con =
 	light_tip_time: 0.25,
 	light_cell_size: 3,
 	monster_normal_speed: 2,
-	monster_chase_speed: 4,
+	monster_max_speed: 5,
 	monster_detect_radius: 5,
 	monster_chase_radius: 9,
 	monster_damage_radius: 3,
 	monster_attack_radius: 1.5,
-	monster_attack_delay: 0.75,
+	monster_attack_delay: 0.5,
+	monster_scare_radius: 4,
 	monster_alert_radius: 16,
 	msg_time: 3,
 	glare_color: new THREE.Color(1, 1, 0.7),
 	level_names:
 	[
-		'HAUNTED HEIST!!',
+		'',
 		'FOYER',
 		'HALLWAY',
 		'LIVING ROOM',
@@ -78,6 +79,34 @@ var con =
 	},
 	speed_multiplier: 2.0,
 	speed_max: 5,
+	audio:
+	{
+		attack:
+		[
+			'snd/attack0.wav',
+			'snd/attack1.wav',
+			'snd/attack2.wav',
+		],
+		coin:
+		[
+			'snd/coin.wav',
+		],
+		coins:
+		[
+			'snd/coins.wav',
+		],
+		light_tip:
+		[
+			'snd/light_tip0.wav',
+			'snd/light_tip1.wav',
+			'snd/light_tip2.wav',
+		],
+		growl:
+		[
+			'snd/growl0.wav',
+			'snd/growl1.wav',
+		],
+	},
 };
 
 var state =
@@ -154,6 +183,7 @@ var graphics =
 
 var global =
 {
+	audio_context: null,
 	clock: new THREE.Clock(),
 	mouse: new THREE.Vector2(),
 	mouse_down: false,
@@ -235,6 +265,41 @@ func.msg = function(msg)
 	}
 	else
 		graphics.msg = null;
+};
+
+func.load_audio = function(url, callback)
+{
+	var request = new XMLHttpRequest();
+	request.open('GET', url, true);
+	request.responseType = 'arraybuffer';
+
+	request.onload = function()
+	{
+		global.audio_context.decodeAudioData
+		(
+			request.response,
+			function(buffer)
+			{
+				if (!buffer)
+				{
+					console.log('error decoding file data: ' + url);
+					return;
+				}
+				callback(buffer);
+			},
+			function(error)
+			{
+				console.error('decodeAudioData error', error);
+			}
+		);
+	};
+
+	request.onerror = function()
+	{
+		console.log('HTTP request failed: ' + url);
+	};
+
+	request.send();
 };
 
 func.init = function()
@@ -321,12 +386,58 @@ func.init = function()
 		graphics.font = response;
 		func.check_done_loading();
 	});
+
+	var AudioContext = window.AudioContext || window.webkitAudioContext;
+	global.audio_context = new AudioContext();
+
+	var sounds = [];
+	for (var snd_name in con.audio)
+	{
+		let snds = con.audio[snd_name];
+		for (var i = 0; i < snds.length; i++)
+		{
+			let snd_index = i;
+			var url = snds[i];
+			func.load_audio(url, function(buffer)
+			{
+				snds[snd_index] = buffer;
+				func.check_done_loading();
+			});
+		}
+	}
+};
+
+func.audio = function(snds, volume)
+{
+	if (typeof volume === 'undefined')
+		volume = 1.0;
+
+	if (volume > 0.0)
+	{
+		var source = global.audio_context.createBufferSource();
+		source.buffer = snds[Math.floor(Math.random() * snds.length)];
+		var gain = global.audio_context.createGain();
+		source.connect(gain);
+		gain.connect(global.audio_context.destination);
+		gain.gain.value = volume;
+		source.start(0);
+	}
 };
 
 func.check_done_loading = function()
 {
 	if (!graphics.font)
 		return false;
+
+	for (var name in con.audio)
+	{
+		var snds = con.audio[name];
+		for (var i = 0; i < snds.length; i++)
+		{
+			if (typeof snds[i] === 'string')
+				return false;
+		}
+	}
 
 	for (var name in graphics.geom)
 	{
@@ -628,7 +739,7 @@ func.cell_hash = function(pos)
 	return pos.x + (pos.y * state.size.x);
 };
 
-func.random_goal = function(start, radius)
+func.random_goal = function(start, radius, filter)
 {
 	var points = [];
 	var visited = {};
@@ -656,7 +767,13 @@ func.random_goal = function(start, radius)
 			}
 		}
 	}
-	return points[Math.floor(Math.random() * points.length)];
+
+	while (true)
+	{
+		var point = points[Math.floor(Math.random() * points.length)];
+		if (typeof filter === 'undefined' || filter(point))
+			return point;
+	}
 };
 
 func.astar = function(start, end, path)
@@ -739,6 +856,7 @@ func.astar = function(start, end, path)
 							i--;
 						}
 					}
+
 					return true;
 				}
 				else
@@ -869,7 +987,7 @@ func.move_dir = function(pos, dir)
 	}
 };
 
-func.move_body = function(position, velocity, dt, speed_max, mask)
+func.move_body = function(position, velocity, dt, speed_max, mask, tip_lights)
 {
 	var original_position = position.clone();
 	if (typeof speed_max === 'undefined')
@@ -908,34 +1026,46 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 					if (func.collides(position.clone().add(con.collision_directions.right), x, y))
 					{
 						position.x = x - 0.5;
-						velocity.x = Math.min(velocity.x, 0);
-						collided_mask |= cell.mask;
-						collision = true;
-						collision_dir = con.directions.right;
+						if (velocity.x > 0)
+						{
+							velocity.x = 0;
+							collided_mask |= cell.mask;
+							collision = true;
+							collision_dir = con.directions.right;
+						}
 					}
 					else if (func.collides(position.clone().add(con.collision_directions.left), x, y))
 					{
 						position.x = x + 1.5;
-						velocity.x = Math.max(velocity.x, 0);
-						collided_mask |= cell.mask;
-						collision = true;
-						collision_dir = con.directions.left;
+						if (velocity.x < 0)
+						{
+							velocity.x = 0;
+							collided_mask |= cell.mask;
+							collision = true;
+							collision_dir = con.directions.left;
+						}
 					}
 					else if (func.collides(position.clone().add(con.collision_directions.forward), x, y))
 					{
 						position.y = y - 0.5;
-						velocity.y = Math.min(velocity.y, 0);
-						collided_mask |= cell.mask;
-						collision = true;
-						collision_dir = con.directions.forward;
+						if (velocity.y > 0)
+						{
+							velocity.y = 0;
+							collided_mask |= cell.mask;
+							collision = true;
+							collision_dir = con.directions.forward;
+						}
 					}
 					else if (func.collides(position.clone().add(con.collision_directions.backward), x, y))
 					{
 						position.y = y + 1.5;
-						velocity.y = Math.max(velocity.y, 0);
-						collided_mask |= cell.mask;
-						collision = true;
-						collision_dir = con.directions.backward;
+						if (velocity.y < 0)
+						{
+							velocity.y = 0;
+							collided_mask |= cell.mask;
+							collision = true;
+							collision_dir = con.directions.backward;
+						}
 					}
 					else
 					{
@@ -964,7 +1094,7 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 						}
 					}
 
-					if (collision && (cell.mask & con.masks.light))
+					if (collision && tip_lights && (cell.mask & con.masks.light))
 					{
 						var light_model = state.light_models[cell.id];
 						if (light_model.on)
@@ -988,6 +1118,7 @@ func.move_body = function(position, velocity, dt, speed_max, mask)
 							if (!conflict)
 							{
 								// knock it over
+								func.audio(con.audio.light_tip);
 								new_cell_coord.set(x, y);
 								for (var j = 0; j < con.light_cell_size - 1; j++)
 								{
@@ -1031,7 +1162,7 @@ func.monster_move = function(monster, speed, dt)
 	if (monster.path.length > 0)
 	{
 		var cell = monster.path[0];
-		var to_cell = cell.clone().sub(monster.pos);
+		var to_cell = cell.clone().add(new THREE.Vector2(0.5, 0.5)).sub(monster.pos);
 		if (to_cell.length() < 0.25)
 		{
 			// move on to the next waypoint
@@ -1040,9 +1171,12 @@ func.monster_move = function(monster, speed, dt)
 		}
 		else
 		{
+			// keep moving toward cell
 			to_cell.normalize();
-			to_cell.multiplyScalar(dt * speed);
-			monster.pos.add(to_cell);
+			to_cell.multiplyScalar(speed);
+			var collided_mask = func.move_body(monster.pos, to_cell, dt, speed, 0xffffff, false);
+			if (collided_mask !== 0) // hit an obstacle; recalculate
+				func.astar(monster.pos, monster.path[monster.path.length - 1], monster.path);
 		}
 	}
 };
@@ -1053,7 +1187,13 @@ func.monster_check_attack = function(monster)
 	{
 		monster.state = con.monster_states.attack;
 		monster.timer = con.monster_attack_delay;
+		func.audio(con.audio.growl);
 	}
+};
+
+func.cell_is_far_from_player = function(cell)
+{
+	return cell.clone().sub(state.player.pos).length() > 12;
 };
 
 func.update = function()
@@ -1062,6 +1202,7 @@ func.update = function()
 
 	var dt = global.clock.getDelta();
 
+	// todo: footsteps
 	// player
 	var player_velocity = new THREE.Vector2();
 	if (state.grid && state.player.alive && global.mouse_down)
@@ -1102,9 +1243,10 @@ func.update = function()
 			mask = 0xffffff; // collide with the door, don't go through it
 		else
 			mask = ~con.masks.door;
-		var collided_mask = func.move_body(state.player.pos, player_velocity, dt, con.speed_max * coin_multiplier, mask);
-		if (collided_mask & con.masks.door)
+		var collided_mask = func.move_body(state.player.pos, player_velocity, dt, con.speed_max * coin_multiplier, mask, true);
+		if ((collided_mask & con.masks.door) && state.player.coins.length > 0)
 		{
+			func.audio(con.audio.coins);
 			state.bank_coins += state.player.coins.length;
 			state.player.coins.length = 0;
 		}
@@ -1134,6 +1276,7 @@ func.update = function()
 		{
 			if (state.player.coins.length < con.max_capacity)
 			{
+				func.audio(con.audio.coin);
 				state.player.coins.push(
 				{
 					pos: coin.pos,
@@ -1198,6 +1341,7 @@ func.update = function()
 		graphics.player_coins.length--;
 	}
 
+	// todo: monster loop sound
 	// monsters
 	for (var i = 0; i < state.monsters.length; i++)
 	{
@@ -1226,7 +1370,8 @@ func.update = function()
 					if (monster.timer2 > 1.0)
 					{
 						monster.state = con.monster_states.chase;
-						monster.timer = 0;
+						monster.path.length = 0;
+						monster.timer = 0.5;
 					}
 				}
 				else
@@ -1248,13 +1393,14 @@ func.update = function()
 						monster.timer = 3.0;
 					}
 				}
-				func.monster_move(monster, con.monster_chase_speed, dt);
+				func.monster_move(monster, con.monster_max_speed, dt);
 				func.monster_check_attack(monster);
 				break;
 			case con.monster_states.attack: // attacking the player
 				monster.timer -= dt;
 				if (monster.timer < 0)
 				{
+					func.audio(con.audio.attack);
 					if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_damage_radius)
 					{
 						// hit; do damage
@@ -1262,6 +1408,7 @@ func.update = function()
 						{
 							// take coins
 							state.player.coins.length = 0; // todo: coin animation
+							func.audio(con.audio.coins);
 							monster.state = con.monster_states.chase;
 							monster.timer = 0;
 						}
@@ -1294,7 +1441,7 @@ func.update = function()
 					monster.state = con.monster_states.normal;
 					monster.timer = 3.0;
 				}
-				func.monster_move(monster, con.monster_chase_speed, dt);
+				func.monster_move(monster, con.monster_max_speed, dt);
 				func.monster_check_attack(monster);
 				break;
 			case con.monster_states.hide: // hiding from the player
@@ -1305,7 +1452,7 @@ func.update = function()
 					monster.timer = 3.0;
 				}
 				else
-					func.monster_move(monster, con.monster_chase_speed, dt);
+					func.monster_move(monster, con.monster_max_speed, dt);
 				break;
 		}
 		graphic.position.set(monster.pos.x, monster.pos.y, 0);
@@ -1361,9 +1508,22 @@ func.update = function()
 				for (var j = 0; j < state.monsters.length; j++)
 				{
 					var monster = state.monsters[j];
-					if (monster.state === con.monster_states.normal
-						&& monster.pos.clone().sub(light_model.pos).length() < con.monster_alert_radius)
+					var distance = monster.pos.clone().sub(light_model.pos).length();
+					if (distance < con.monster_scare_radius)
 					{
+						// run away
+						// todo: whimper sound
+						var path = [];
+						func.astar(monster.pos, func.random_goal(light_model.pos, 30, func.cell_is_far_from_player), path);
+						if (path.length > 0)
+						{
+							monster.state = con.monster_states.hide;
+							monster.path = path;
+						}
+					}
+					else if (monster.state === con.monster_states.normal && distance < con.monster_alert_radius)
+					{
+						// todo: howl sound
 						var path = [];
 						func.astar(monster.pos, func.random_goal(light_model.pos, 2), path);
 						if (path.length > 0)
