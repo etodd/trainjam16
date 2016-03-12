@@ -455,7 +455,7 @@ var con =
 	light_cell_size: 3,
 	monster_normal_speed: 2,
 	monster_max_speed: 7,
-	monster_detect_radius: 4.5,
+	monster_detect_radius: 5,
 	monster_chase_radius: 6,
 	monster_damage_radius: 3,
 	monster_attack_radius: 1.5,
@@ -1839,6 +1839,7 @@ func.update = function()
 					if (spawn_point !== null)
 					{
 						func.monster_spawn(spawn_point);
+						func.audio(con.audio.growl);
 						func.msg('+1 MONSTER');
 					}
 				}
