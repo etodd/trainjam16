@@ -1,221 +1,5 @@
 'use strict';
 
-// constants
-var con =
-{
-	camera_offset: new THREE.Vector3(),
-	camera_size: 12.0,
-	coin_flip_time: 0.5,
-	coin_velocity_damping: 3.0,
-	damage_time: 2.0,
-	light_tip_time: 0.25,
-	light_cell_size: 3,
-	monster_normal_speed: 2,
-	monster_max_speed: 7,
-	monster_detect_radius: 6,
-	monster_chase_radius: 7,
-	monster_damage_radius: 3,
-	monster_attack_radius: 1.5,
-	monster_attack_delay: 0.5,
-	monster_post_attack_delay: 0.75,
-	monster_scare_radius: 4,
-	monster_alert_radius: 20,
-	body_radius: 0.4,
-	load_bar_size: new THREE.Vector2(5, 1),
-	fade_time: 3,
-	msg_time: 2.5,
-	glare_color: new THREE.Color(1, 1, 0.7),
-	level_names:
-	[
-		'',
-		'FOYER',
-		'HALLWAY',
-		'LIVING ROOM',
-		'STUDY',
-		'YOU PULLED IT OFF!',
-	],
-	collision_directions:
-	{
-		right: new THREE.Vector2(0.45, 0),
-		left: new THREE.Vector2(-0.45, 0),
-		forward: new THREE.Vector2(0, 0.45),
-		backward: new THREE.Vector2(0, -0.45),
-	},
-	directions:
-	{
-		right: 0,
-		left: 1,
-		forward: 2,
-		backward: 3,
-	},
-	directions_with_diagonals:
-	{
-		right: 0,
-		left: 1,
-		forward: 2,
-		backward: 3,
-		right_forward: 4,
-		left_forward: 5,
-		right_backward: 6,
-		left_backward: 7,
-	},
-	max_capacity: 4,
-	masks:
-	{
-		wall: 1 << 0,
-		light: 1 << 1,
-		coin: 1 << 2,
-		player: 1 << 3,
-		door: 1 << 4,
-	},
-	monster_states:
-	{
-		normal: 0,
-		chase: 1,
-		attack: 2,
-		alert: 3,
-		hide: 4,
-	},
-	codes:
-	{
-		wall: [0, 0, 0],
-		light: [255, 0, 0],
-		coin: [0, 255, 0],
-		player: [255, 255, 0],
-		door: [0, 255, 255],
-		monster: [255, 0, 255],
-	},
-	speed_multiplier: 2.0,
-	speed_max: 5.0,
-	audio:
-	{
-		coin: [ 'snd/coin.wav', ],
-		coins: [ 'snd/coins.wav', ],
-		howl: [ 'snd/howl.wav', ],
-		whimper: [ 'snd/whimper.wav', ],
-		door_close: [ 'snd/door_close.wav', ],
-		monster_loop: [ 'snd/monster_loop.wav', ],
-		menu_music: [ 'snd/menu_music.mp3' ],
-		end_music: [ 'snd/end_music.mp3' ],
-		attack:
-		[
-			'snd/attack0.wav',
-			'snd/attack1.wav',
-			'snd/attack2.wav',
-		],
-		footstep:
-		[
-			'snd/footstep0.wav',
-			'snd/footstep1.wav',
-			'snd/footstep2.wav',
-			'snd/footstep3.wav',
-			'snd/footstep4.wav',
-			'snd/footstep5.wav',
-			'snd/footstep6.wav',
-		],
-		light_tip:
-		[
-			'snd/light_tip0.wav',
-			'snd/light_tip1.wav',
-			'snd/light_tip2.wav',
-		],
-		growl:
-		[
-			'snd/growl0.wav',
-			'snd/growl1.wav',
-		],
-	},
-};
-
-var state =
-{
-	font: null,
-	level: 0,
-	grid: null,
-	size: new THREE.Vector2(),
-	door: new THREE.Vector2(),
-	door_coins: 1,
-	bank_coins: 0,
-	coins: [],
-	light_models: [],
-	monsters: [],
-	player:
-	{
-		alive: false,
-		damage_timer: 0,
-		pos: new THREE.Vector2(),
-		coins: [],
-		light: 1,
-	},
-};
-
-var graphics =
-{
-	overlay: null,
-	load_bar: null,
-	load_bar_background: null,
-	logo: null,
-	ui: null,
-	texture_loader: new THREE.TextureLoader(),
-	model_loader: new THREE.JSONLoader(),
-	door_text:
-	{
-		bank_coins: 0,
-		door_coins: 0,
-		mesh: null,
-	},
-	msg: null,
-	msg_timer: 0,
-	scene: null,
-	camera: null,
-	renderer: null,
-	scenery: [],
-	flicker_lights: [],
-	monsters: [],
-	light_models: [],
-	coins: [],
-	player_coins: [],
-	camera_pos: new THREE.Vector2(),
-	camera_pos_target: new THREE.Vector2(2, 10),
-	ground: null,
-	player: null,
-	reticle: null,
-	player_light: null,
-	level: { },
-	geom:
-	{
-		light: null,
-		player: null,
-		monster: null,
-		wall: null,
-		coin: null,
-	},
-	texture:
-	{
-		floor: null,
-		wall: null,
-		glare: null,
-		logo: null,
-	},
-};
-
-var global =
-{
-	load_total: 0,
-	load_count: 0,
-	level_timer: 0,
-	music: null,
-	monster_loop_gain: null,
-	audio_context: null,
-	clock: new THREE.Clock(),
-	mouse: new THREE.Vector2(),
-	mouse_down: false,
-	button_down: false,
-	last_button_down: false,
-	last_mouse_down: false,
-	footstep_counter: 0,
-};
-
 // three.js extensions
 
 /**
@@ -652,6 +436,233 @@ THREE.ReticleGeometry = function(width, height)
 THREE.ReticleGeometry.prototype = Object.create(THREE.BufferGeometry.prototype);
 THREE.ReticleGeometry.prototype.constructor = THREE.ReticleGeometry;
 
+
+
+
+
+
+
+// constants
+
+var con =
+{
+	camera_offset: new THREE.Vector3(),
+	camera_size: 12.0,
+	coin_flip_time: 0.5,
+	coin_velocity_damping: 3.0,
+	damage_time: 1.5,
+	light_tip_time: 0.25,
+	light_cell_size: 3,
+	monster_normal_speed: 2,
+	monster_max_speed: 7,
+	monster_detect_radius: 4.5,
+	monster_chase_radius: 6,
+	monster_damage_radius: 3,
+	monster_attack_radius: 1.5,
+	monster_attack_delay: 0.5,
+	monster_post_attack_delay: 0.8,
+	monster_scare_radius: 5,
+	monster_alert_radius: 20,
+	quit_time: 1.5,
+	body_radius: 0.4,
+	load_bar_size: new THREE.Vector2(5, 1),
+	fade_time: 3,
+	msg_time: 2.5,
+	glare_color: new THREE.Color(1, 1, 0.7),
+	level_names:
+	[
+		'',
+		'FOYER',
+		'HALLWAY',
+		'STUDY',
+		'EAST WING',
+		'LIVING ROOM',
+		'YOU PULLED IT OFF!',
+	],
+	collision_directions:
+	{
+		right: new THREE.Vector2(0.45, 0),
+		left: new THREE.Vector2(-0.45, 0),
+		forward: new THREE.Vector2(0, 0.45),
+		backward: new THREE.Vector2(0, -0.45),
+	},
+	directions:
+	{
+		right: 0,
+		left: 1,
+		forward: 2,
+		backward: 3,
+	},
+	directions_with_diagonals:
+	{
+		right: 0,
+		left: 1,
+		forward: 2,
+		backward: 3,
+		right_forward: 4,
+		left_forward: 5,
+		right_backward: 6,
+		left_backward: 7,
+	},
+	max_capacity: 4,
+	masks:
+	{
+		wall: 1 << 0,
+		light: 1 << 1,
+		coin: 1 << 2,
+		player: 1 << 3,
+		door: 1 << 4,
+	},
+	monster_states:
+	{
+		normal: 0,
+		chase: 1,
+		attack: 2,
+		alert: 3,
+		hide: 4,
+	},
+	codes:
+	{
+		wall: [0, 0, 0],
+		light: [255, 0, 0],
+		coin: [0, 255, 0],
+		player: [255, 255, 0],
+		door: [0, 255, 255],
+		monster: [255, 0, 255],
+	},
+	speed_multiplier: 2.0,
+	speed_max: 5.0,
+	audio:
+	{
+		coin: [ 'snd/coin.wav', ],
+		coins: [ 'snd/coins.wav', ],
+		howl: [ 'snd/howl.wav', ],
+		whimper: [ 'snd/whimper.wav', ],
+		door_close: [ 'snd/door_close.wav', ],
+		monster_loop: [ 'snd/monster_loop.wav', ],
+		menu_music: [ 'snd/menu_music.mp3' ],
+		end_music: [ 'snd/end_music.mp3' ],
+		attack:
+		[
+			'snd/attack0.wav',
+			'snd/attack1.wav',
+			'snd/attack2.wav',
+		],
+		footstep:
+		[
+			'snd/footstep0.wav',
+			'snd/footstep1.wav',
+			'snd/footstep2.wav',
+			'snd/footstep3.wav',
+			'snd/footstep4.wav',
+			'snd/footstep5.wav',
+			'snd/footstep6.wav',
+		],
+		light_tip:
+		[
+			'snd/light_tip0.wav',
+			'snd/light_tip1.wav',
+			'snd/light_tip2.wav',
+		],
+		growl:
+		[
+			'snd/growl0.wav',
+			'snd/growl1.wav',
+		],
+	},
+};
+
+var state =
+{
+	font: null,
+	level: 0,
+	grid: null,
+	size: new THREE.Vector2(),
+	door: new THREE.Vector2(),
+	door_coins: 1,
+	bank_coins: 0,
+	coins: [],
+	light_models: [],
+	monsters: [],
+	player:
+	{
+		alive: false,
+		damage_timer: 0,
+		pos: new THREE.Vector2(),
+		coins: [],
+	},
+};
+
+var graphics =
+{
+	overlay: null,
+	load_bar: null,
+	load_bar_background: null,
+	logo: null,
+	ui: null,
+	texture_loader: new THREE.TextureLoader(),
+	model_loader: new THREE.JSONLoader(),
+	door_text:
+	{
+		bank_coins: 0,
+		door_coins: 0,
+		mesh: null,
+	},
+	msg: null,
+	msg_timer: 0,
+	quit_msg: 0,
+	scene: null,
+	camera: null,
+	renderer: null,
+	scenery: [],
+	flicker_lights: [],
+	monsters: [],
+	light_models: [],
+	coins: [],
+	player_coins: [],
+	camera_pos: new THREE.Vector2(),
+	camera_pos_target: new THREE.Vector2(2, 10),
+	ground: null,
+	player: null,
+	reticle: null,
+	player_light: null,
+	level: { },
+	geom:
+	{
+		light: null,
+		player: null,
+		monster: null,
+		wall: null,
+		coin: null,
+	},
+	texture:
+	{
+		floor: null,
+		wall: null,
+		glare: null,
+		logo: null,
+	},
+};
+
+var global =
+{
+	quit_timer: 0,
+	load_total: 0,
+	load_count: 0,
+	level_timer: 0,
+	music: null,
+	monster_loop_gain: null,
+	audio_context: null,
+	clock: new THREE.Clock(),
+	mouse: new THREE.Vector2(),
+	mouse_down: false,
+	button_down: false,
+	quit_key_down: false,
+	last_button_down: false,
+	last_mouse_down: false,
+	footstep_counter: 0,
+};
+
 // procedures
 
 var func = {};
@@ -720,6 +731,18 @@ func.load_geom = function(geom_name)
 		global.load_count++;
 		func.check_done_loading();
 	});
+};
+
+func.on_keydown = function(e)
+{
+	if (e.keyCode === 27)
+		global.quit_key_down = true;
+};
+
+func.on_keyup = function(e)
+{
+	if (e.keyCode === 27)
+		global.quit_key_down = false;
 };
 
 func.init = function()
@@ -911,6 +934,18 @@ func.check_done_loading = function()
 	graphics.load_bar = null;
 	graphics.load_bar_background = null;
 
+	// quit message
+	{
+		graphics.quit_msg = func.create_text('Hold to quit', 2.0, graphics.ui);
+		graphics.quit_msg.material = new THREE.ShaderMaterial(
+		{
+			vertexShader: document.getElementById('vertex_shader_unlit').textContent,
+			fragmentShader: document.getElementById('fragment_shader_unlit').textContent,
+		});
+		graphics.quit_msg.position.y = 3.0;
+		graphics.quit_msg.visible = false;
+	}
+
 	// monster loop
 	{
 		var source = global.audio_context.createBufferSource();
@@ -1040,13 +1075,21 @@ func.monster_spawn = function(pos)
 	monster.position.set(pos.x, pos.y, 0);
 	graphics.scenery.push(monster);
 	graphics.monsters.push(monster);
+
+	var exclamation = func.create_text('!', 1.0, monster);
+	exclamation.material = new THREE.ShaderMaterial(
+	{
+		vertexShader: document.getElementById('vertex_shader_unlit').textContent,
+		fragmentShader: document.getElementById('fragment_shader_unlit').textContent,
+	});
+	exclamation.rotation.copy(graphics.camera.rotation);
+	exclamation.position.z = 1.5;
 };
 
 func.load_level = function(level)
 {
 	// unload old stuff
 	state.player.coins.length = 0;
-	state.player.light = 1;
 	state.grid = null;
 	state.coins.length = 0;
 	state.bank_coins = 0;
@@ -1244,7 +1287,9 @@ func.random_goal = function(start, radius, filter)
 		{
 			var adjacent = coord.clone();
 			func.move_dir(adjacent, con.directions[dir_name]);
-			if (adjacent.clone().sub(start).length() < radius)
+			if (adjacent.x >= 0 && adjacent.x < state.size.x
+				&& adjacent.y >= 0 && adjacent.y < state.size.y
+				&& adjacent.clone().sub(start).length() < radius)
 			{
 				var hash = func.cell_hash(adjacent);
 				if (!visited[hash] && state.grid[adjacent.x][adjacent.y].mask === 0)
@@ -1302,7 +1347,9 @@ func.astar = function(start, end, path)
 		{
 			var adjacent = coord.clone();
 			func.move_dir(adjacent, con.directions[dir_name]);
-			if (state.grid[adjacent.x][adjacent.y].mask === 0)
+			if (adjacent.x >= 0 && adjacent.x < state.size.x
+				&& adjacent.y >= 0 && adjacent.y < state.size.y
+				&& state.grid[adjacent.x][adjacent.y].mask === 0)
 			{
 				var hash = func.cell_hash(adjacent);
 				var existing_travel_score = travel_scores[hash];
@@ -1329,7 +1376,9 @@ func.astar = function(start, end, path)
 						{
 							var adjacent = coord.clone();
 							func.move_dir(adjacent, con.directions[dir_name]);
-							if (state.grid[adjacent.x][adjacent.y].mask !== 0)
+							if (adjacent.x >= 0 && adjacent.x < state.size.x
+								&& adjacent.y >= 0 && adjacent.y < state.size.y
+								&& state.grid[adjacent.x][adjacent.y].mask !== 0)
 							{
 								adjacent_obstacle = true;
 								break;
@@ -1595,6 +1644,8 @@ func.move_body = function(position, velocity, dt, speed_max, mask, tip_lights)
 							if (!conflict)
 							{
 								// knock it over
+								if (state.level < 3)
+									func.msg('SSHHH!');
 								func.audio(con.audio.light_tip);
 								new_cell_coord.set(x, y);
 								for (var j = 0; j < con.light_cell_size - 1; j++)
@@ -1818,8 +1869,7 @@ func.update = function()
 		}
 
 		graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
-		state.player.light = Math.max(0, state.player.light + dt * -0.0035);
-		func.flicker_light(graphics.player_light, 0, state.player.light);
+		func.flicker_light(graphics.player_light, 0, 1.2);
 
 		// coins
 		while (graphics.coins.length < state.coins.length)
@@ -1934,7 +1984,15 @@ func.update = function()
 					if (state.player.alive)
 					{
 						if (state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
-							monster.timer2 += dt;
+						{
+							// make sure we can actually see the player
+							var path = [];
+							func.astar(monster.pos, state.player.pos, path);
+							if (path.length < con.monster_detect_radius + 1)
+								monster.timer2 += dt;
+							else
+								monster.timer2 = 0;
+						}
 						else
 							monster.timer2 = 0;
 						if (monster.timer2 > 1.0)
@@ -1953,11 +2011,22 @@ func.update = function()
 					if (monster.timer < 0 || monster.path.length === 0)
 					{
 						monster.timer = 0.5;
+						var lost_player = false;
 						if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_chase_radius)
-							func.astar(monster.pos, state.player.pos, monster.path); // update path
-						else if (monster.path.length === 0)
 						{
-							// followed path, can't find them
+							// make sure we can actually see the player
+							var path = [];
+							func.astar(monster.pos, state.player.pos, path); // update path
+							if (path.length < con.monster_chase_radius + 1)
+								monster.path = path;
+							else
+								lost_player = true;
+						}
+						else if (monster.path.length === 0)
+							lost_player = true;
+
+						if (lost_player)
+						{
 							monster.state = con.monster_states.normal;
 							monster.path.length = 0;
 							monster.timer = 3.0;
@@ -2025,13 +2094,22 @@ func.update = function()
 					}
 					break;
 				case con.monster_states.alert: // checking out a noise
+					var chase = false;
 					if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
 					{
-						monster.state = con.monster_states.chase;
-						monster.timer = 0;
-						monster.path.length = 0;
+						// make sure we can actually see the player
+						var path = [];
+						func.astar(monster.pos, state.player.pos, path);
+						if (path.length < con.monster_detect_radius + 1)
+						{
+							chase = true;
+							monster.state = con.monster_states.chase;
+							monster.timer = 0;
+							monster.path.length = 0;
+						}
 					}
-					else if (monster.path.length === 0)
+
+					if (!chase && monster.path.length === 0)
 					{
 						monster.state = con.monster_states.normal;
 						monster.timer = 3.0;
@@ -2051,6 +2129,10 @@ func.update = function()
 					break;
 			}
 			graphic.position.set(monster.pos.x, monster.pos.y, 0);
+
+			// exclamation point
+			graphic.children[0].visible = monster.state === con.monster_states.hide;
+
 			if (monster.state === con.monster_states.attack)
 			{
 				if (monster.timer > 0)
@@ -2065,6 +2147,7 @@ func.update = function()
 				graphic.scale.set(1, 1, 1);
 			}
 		}
+
 		if (closest_monster > 0)
 			global.monster_loop_gain.gain.value = Math.max(0, 0.25 * (1.0 - (closest_monster / (con.camera_size * 0.75))));
 		else
@@ -2161,6 +2244,20 @@ func.update = function()
 			func.flicker_light(graphics.flicker_lights[i], i);
 		
 		// ui
+		if (state.level !== 0 && state.level !== con.level_names.length - 1
+			&& (global.quit_key_down || global.button_down))
+		{
+			graphics.quit_msg.visible = true;
+			global.quit_timer += dt;
+			if (global.quit_timer > con.quit_time)
+				func.load_level(0);
+		}
+		else
+		{
+			global.quit_timer = 0;
+			graphics.quit_msg.visible = false;
+		}
+
 		if (graphics.msg_timer > 0)
 		{
 			graphics.msg_timer -= dt;
