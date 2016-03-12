@@ -4,22 +4,24 @@
 var con =
 {
 	camera_offset: new THREE.Vector3(),
-	camera_size: 15.0,
+	camera_size: 12.0,
 	coin_flip_time: 0.5,
 	coin_velocity_damping: 3.0,
 	damage_time: 1.5,
 	light_tip_time: 0.25,
 	light_cell_size: 3,
 	monster_normal_speed: 2,
-	monster_max_speed: 4.5,
+	monster_max_speed: 5,
 	monster_detect_radius: 5,
-	monster_chase_radius: 9,
+	monster_chase_radius: 8,
 	monster_damage_radius: 3,
 	monster_attack_radius: 1.5,
 	monster_attack_delay: 0.5,
 	monster_scare_radius: 4,
 	monster_alert_radius: 16,
-	msg_time: 3,
+	body_radius: 0.4,
+	fade_time: 3,
+	msg_time: 2.5,
 	glare_color: new THREE.Color(1, 1, 0.7),
 	level_names:
 	[
@@ -27,14 +29,13 @@ var con =
 		'FOYER',
 		'HALLWAY',
 		'LIVING ROOM',
-		'YOU WIN!',
 	],
 	collision_directions:
 	{
-		right: new THREE.Vector2(0.5, 0),
-		left: new THREE.Vector2(-0.5, 0),
-		forward: new THREE.Vector2(0, 0.5),
-		backward: new THREE.Vector2(0, -0.5),
+		right: new THREE.Vector2(0.45, 0),
+		left: new THREE.Vector2(-0.45, 0),
+		forward: new THREE.Vector2(0, 0.45),
+		backward: new THREE.Vector2(0, -0.45),
 	},
 	directions:
 	{
@@ -80,8 +81,8 @@ var con =
 		door: [0, 255, 255],
 		monster: [255, 0, 255],
 	},
-	speed_multiplier: 4.0,
-	speed_max: 5,
+	speed_multiplier: 3.0,
+	speed_max: 5.0,
 	audio:
 	{
 		attack:
@@ -158,6 +159,8 @@ var state =
 
 var graphics =
 {
+	overlay: null,
+	logo: null,
 	ui: null,
 	texture_loader: new THREE.TextureLoader(),
 	model_loader: new THREE.JSONLoader(),
@@ -183,13 +186,7 @@ var graphics =
 	ground: null,
 	player: null,
 	player_light: null,
-	level:
-	{
-		0: null,
-		1: null,
-		2: null,
-		3: null,
-	},
+	level: { },
 	geom:
 	{
 		light: null,
@@ -202,13 +199,14 @@ var graphics =
 	{
 		floor: null,
 		wall: null,
-		door: null,
 		glare: null,
+		logo: null,
 	},
 };
 
 var global =
 {
+	level_timer: 0,
 	monster_loop_gain: null,
 	audio_context: null,
 	clock: new THREE.Clock(),
@@ -289,7 +287,7 @@ func.msg = function(msg)
 			vertexShader: document.getElementById('vertex_shader_unlit').textContent,
 			fragmentShader: document.getElementById('fragment_shader_unlit').textContent,
 		});
-		graphics.msg.position.y = -2.0;
+		graphics.msg.position.y = -3.0;
 	}
 	else
 		graphics.msg = null;
@@ -334,6 +332,13 @@ func.init = function()
 {
 	global.clock.start();
 
+	var i = 0;
+	for (var name in con.level_names)
+	{
+		graphics.level[i] = null; // set the level up to be loaded later
+		i++;
+	}
+
 	window.addEventListener('resize', func.on_resize, false);
 
 	graphics.scene = new THREE.Scene();
@@ -354,6 +359,14 @@ func.init = function()
 	graphics.ui = new THREE.Object3D();
 	graphics.ui.quaternion.setFromEuler(graphics.camera.rotation);
 	graphics.scene.add(graphics.ui);
+
+	{
+		var material = new THREE.SpriteMaterial({ color: 0x000000, });
+		graphics.overlay = new THREE.Sprite(material);
+		graphics.overlay.position.z = -1;
+		graphics.ui.add(graphics.overlay);
+		graphics.overlay.visible = false;
+	}
 
 	graphics.renderer = new THREE.WebGLRenderer({ antialias: true });
 	graphics.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -632,6 +645,7 @@ func.load_level = function(level)
 	state.light_models.length = 0;
 	state.monsters.length = 0;
 
+	graphics.logo = null;
 	graphics.light_models.length = 0;
 	graphics.monsters.length = 0;
 	graphics.door_text.mesh = null;
@@ -643,7 +657,7 @@ func.load_level = function(level)
 	}
 
 	for (var i = 0; i < graphics.scenery.length; i++)
-		graphics.scene.remove(graphics.scenery[i]);
+		graphics.scenery[i].parent.remove(graphics.scenery[i]);
 	graphics.scenery.length = 0;
 
 	graphics.flicker_lights.length = 0;
@@ -651,6 +665,7 @@ func.load_level = function(level)
 	// load new stuff
 	state.level = level;
 	state.player.alive = state.level > 0;
+	global.level_timer = 0;
 
 	var texture = graphics.level[state.level];
 
@@ -749,9 +764,10 @@ func.load_level = function(level)
 				&& canvas_data.data[offset + 1] === con.codes.door[1]
 				&& canvas_data.data[offset + 2] === con.codes.door[2])
 			{
-				graphics.door = func.add_mesh(graphics.geom.door, 0xcccc44);
-				graphics.scenery.push(graphics.door);
+				graphics.door = new THREE.Object3D();
 				graphics.door.position.set(pos.x, pos.y, 0);
+				graphics.scene.add(graphics.door);
+				graphics.scenery.push(graphics.door);
 
 				state.door.set(x, y);
 				state.door_coins = canvas_data.data[offset];
@@ -788,7 +804,14 @@ func.load_level = function(level)
 	
 	func.msg(con.level_names[state.level]);
 
-	if (state.level > 0)
+	if (state.level === 0)
+	{
+		var material = new THREE.SpriteMaterial({ map: graphics.texture.logo, color: 0xffffff, });
+		graphics.logo = new THREE.Sprite(material);
+		graphics.scenery.push(graphics.logo);
+		graphics.ui.add(graphics.logo);
+	}
+	else
 		func.audio(con.audio.door_close);
 };
 
@@ -1089,60 +1112,48 @@ func.move_body = function(position, velocity, dt, speed_max, mask, tip_lights)
 					// first check cardinal directions
 					var collision_dir;
 					var collision = false;
-					if (func.collides(position.clone().add(con.collision_directions.right), x, y))
+					if (velocity.x > 0 && func.collides(position.clone().add(con.collision_directions.right), x, y))
 					{
-						position.x = x - 0.5;
-						if (velocity.x > 0)
-						{
-							velocity.x = 0;
-							collided_mask |= cell.mask;
-							collision = true;
-							collision_dir = con.directions.right;
-						}
+						position.x = x - con.body_radius;
+						velocity.x = 0;
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.right;
 					}
-					else if (func.collides(position.clone().add(con.collision_directions.left), x, y))
+					if (velocity.x < 0 && func.collides(position.clone().add(con.collision_directions.left), x, y))
 					{
-						position.x = x + 1.5;
-						if (velocity.x < 0)
-						{
-							velocity.x = 0;
-							collided_mask |= cell.mask;
-							collision = true;
-							collision_dir = con.directions.left;
-						}
+						position.x = x + 1 + con.body_radius;
+						velocity.x = 0;
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.left;
 					}
-					else if (func.collides(position.clone().add(con.collision_directions.forward), x, y))
+					if (velocity.y > 0 && func.collides(position.clone().add(con.collision_directions.forward), x, y))
 					{
-						position.y = y - 0.5;
-						if (velocity.y > 0)
-						{
-							velocity.y = 0;
-							collided_mask |= cell.mask;
-							collision = true;
-							collision_dir = con.directions.forward;
-						}
+						position.y = y - con.body_radius;
+						velocity.y = 0;
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.forward;
 					}
-					else if (func.collides(position.clone().add(con.collision_directions.backward), x, y))
+					else if (velocity.y < 0 && func.collides(position.clone().add(con.collision_directions.backward), x, y))
 					{
-						position.y = y + 1.5;
-						if (velocity.y < 0)
-						{
-							velocity.y = 0;
-							collided_mask |= cell.mask;
-							collision = true;
-							collision_dir = con.directions.backward;
-						}
+						position.y = y + 1 + con.body_radius;
+						velocity.y = 0;
+						collided_mask |= cell.mask;
+						collision = true;
+						collision_dir = con.directions.backward;
 					}
 					else
 					{
 						var corner_info = func.closest_corner(position, x, y);
-						if (corner_info.distance < 0.5)
+						if (corner_info.distance < con.body_radius)
 						{
 							var corner_to_body_normalized = position.clone().sub(corner_info.corner);
 							corner_to_body_normalized.normalize();
 
 							var adjustment = corner_to_body_normalized.clone();
-							adjustment.multiplyScalar(0.5 - corner_info.distance);
+							adjustment.multiplyScalar(con.body_radius - corner_info.distance);
 							position.add(adjustment);
 
 							var penetration_velocity = velocity.dot(corner_to_body_normalized);
@@ -1252,6 +1263,8 @@ func.update = function()
 	requestAnimationFrame(func.update);
 
 	var dt = global.clock.getDelta();
+
+	global.level_timer += dt;
 
 	// player
 	if (state.player.damage_timer > 0)
@@ -1524,7 +1537,7 @@ func.update = function()
 							// missed; keep chasing
 						}
 					}
-					else if (monster.timer < -0.5)
+					else if (monster.timer < -1.0)
 					{
 						// attack is done
 						monster.state = state.player.alive ? con.monster_states.chase : con.monster_states.normal;
@@ -1671,10 +1684,12 @@ func.update = function()
 	{
 		// player is dead, msg timer is up, and player is clicking
 		// time to transition levels
-		if (state.level === 0)
+		if (state.level === 0) // title
 			func.load_level(1); // start the game
+		else if (state.level === con.level_names.length - 1) // last level
+			func.load_level(0); // start over
 		else
-			func.load_level(0); // go back to start
+			func.load_level(state.level); // reload level
 	}
 
 	// player model visibility
@@ -1690,6 +1705,16 @@ func.update = function()
 
 	global.last_mouse_down = global.mouse_down;
 
+	// overlay
+	if (global.level_timer < con.fade_time)
+	{
+		graphics.overlay.visible = true;
+		graphics.overlay.scale.set(graphics.camera.right - graphics.camera.left, graphics.camera.top - graphics.camera.bottom, 1);
+		graphics.overlay.material.opacity = 1.0 - (global.level_timer / con.fade_time);
+	}
+	else
+		graphics.overlay.visible = false;
+
 	// render
 	graphics.renderer.render(graphics.scene, graphics.camera);
 };
@@ -1703,6 +1728,13 @@ func.update_projection = function()
 {
 	var min_size = window.innerWidth < window.innerHeight ? window.innerWidth : window.innerHeight;
 	var zoom = con.camera_size / min_size;
+
+	if (graphics.logo)
+	{
+		var aspect = graphics.texture.logo.image.width / graphics.texture.logo.image.height;
+		graphics.logo.scale.set(0.01 * aspect * min_size, 0.01 * min_size, 1);
+	}
+
 	graphics.camera.left = -0.5 * window.innerWidth * zoom;
 	graphics.camera.right = 0.5 * window.innerWidth * zoom;
 	graphics.camera.top = 0.5 * window.innerHeight * zoom;
