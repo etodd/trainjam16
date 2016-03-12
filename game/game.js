@@ -1076,7 +1076,7 @@ func.monster_spawn = function(pos)
 	graphics.scenery.push(monster);
 	graphics.monsters.push(monster);
 
-	var exclamation = func.create_text('!', 1.0, monster);
+	var exclamation = func.create_text('!', 1.5, monster);
 	exclamation.material = new THREE.ShaderMaterial(
 	{
 		vertexShader: document.getElementById('vertex_shader_unlit').textContent,
@@ -2146,6 +2146,11 @@ func.update = function()
 				else
 					graphic.rotation.z = (monster.timer / -con.monster_post_attack_delay) * Math.PI * 2.0;
 				graphic.scale.set(con.monster_damage_radius / 0.77, con.monster_damage_radius / 0.77, 1);
+			}
+			else if (monster.state === con.monster_states.hide)
+			{
+				graphic.rotation.z = 0;
+				graphic.scale.set(0.5, 0.5, 0.5);
 			}
 			else
 			{
