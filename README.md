@@ -11,3 +11,7 @@ http://freesound.org/people/pepingrillin/sounds/53760/
 http://freesound.org/people/Northern_Monkey/sounds/176550/
 http://freesound.org/people/satanicupsman/sounds/144015/
 http://freesound.org/people/Abyssmal/sounds/35213/
+http://freesound.org/people/Hybrid_V/sounds/320737/
+http://freesound.org/people/Kyle1Katarn/sounds/108412/
+http://freesound.org/people/MWLANDI/sounds/85857/
+http://freesound.org/people/mickfire/sounds/326416/
