@@ -84,7 +84,7 @@ var con =
 		door: [0, 255, 255],
 		monster: [255, 0, 255],
 	},
-	speed_multiplier: 3.0,
+	speed_multiplier: 2.0,
 	speed_max: 5.0,
 	audio:
 	{
@@ -176,6 +176,7 @@ var graphics =
 	camera_pos_target: new THREE.Vector2(2, 10),
 	ground: null,
 	player: null,
+	reticle: null,
 	player_light: null,
 	level: { },
 	geom:
@@ -258,9 +259,61 @@ THREE.FloorGeometry = function(width, height)
 	this.addAttribute('normal', new THREE.BufferAttribute(normals, 3));
 	this.addAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 };
-
 THREE.FloorGeometry.prototype = Object.create(THREE.BufferGeometry.prototype);
 THREE.FloorGeometry.prototype.constructor = THREE.FloorGeometry;
+
+THREE.ReticleGeometry = function(width, height)
+{
+	THREE.BufferGeometry.call(this);
+
+	this.type = 'ReticleGeometry';
+
+	this.parameters =
+	{
+		width: width,
+		height: height,
+	};
+
+	var vertices = new Float32Array(3 * 3);
+	var normals = new Float32Array(3 * 3);
+	var uvs = new Float32Array(3 * 2);
+
+	var z = 0.1;
+	vertices[0] = width * 0.5;
+	vertices[1] = -height;
+	vertices[2] = z;
+	vertices[3 + 0] = 0;
+	vertices[3 + 1] = 0;
+	vertices[3 + 2] = z;
+	vertices[3 + 0] = 0;
+	vertices[6 + 0] = width * -0.5;
+	vertices[6 + 1] = -height;
+	vertices[6 + 2] = z;
+
+	normals[2] = 1;
+	normals[3 + 2] = 1;
+	normals[6 + 2] = 1;
+
+	uvs[0] = 0;
+	uvs[1] = 0;
+	uvs[1 + 0] = 0.5;
+	uvs[1 + 1] = 1;
+	uvs[2 + 0] = 1;
+	uvs[2 + 1] = 0;
+
+	var indices = new Uint16Array(3);
+
+	indices[0] = 0;
+	indices[1] = 1;
+	indices[2] = 2;
+
+	this.setIndex(new THREE.BufferAttribute(indices, 1));
+	this.addAttribute('position', new THREE.BufferAttribute(vertices, 3));
+	this.addAttribute('normal', new THREE.BufferAttribute(normals, 3));
+	this.addAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+};
+THREE.ReticleGeometry.prototype = Object.create(THREE.BufferGeometry.prototype);
+THREE.ReticleGeometry.prototype.constructor = THREE.ReticleGeometry;
 
 // procedures
 
@@ -454,6 +507,8 @@ func.audio = function(snds, volume, min_time_threshold)
 	if (volume > 0.0)
 	{
 		var source = global.audio_context.createBufferSource();
+
+		// choose a sound
 		if (snds.length > 1)
 		{
 			var index;
@@ -463,11 +518,12 @@ func.audio = function(snds, volume, min_time_threshold)
 			}
 			while (index === snds.last_played);
 			snds.last_played = index;
-			snds.time_last_played = new Date();
 			source.buffer = snds[index];
 		}
 		else
 			source.buffer = snds[0];
+
+		snds.time_last_played = new Date();
 		var gain = global.audio_context.createGain();
 		source.connect(gain);
 		gain.connect(global.audio_context.destination);
@@ -545,6 +601,8 @@ func.check_done_loading = function()
 	graphics.player_light = new THREE.PointLight(0xaa3311, 1, 5);
 	graphics.player_light.position.set(0, 0, 1.5);
 	graphics.player.add(graphics.player_light);
+	graphics.reticle = func.add_mesh(new THREE.ReticleGeometry(0.4, 0.6), 0xff0000);
+	graphics.player.add(graphics.reticle);
 
 	func.load_level(state.level);
 
@@ -1280,76 +1338,108 @@ func.update = function()
 	// player
 	if (state.player.damage_timer > 0)
 		state.player.damage_timer -= dt;
-	var player_velocity = new THREE.Vector2();
-	if (state.grid && state.player.alive && global.mouse_down)
+
+	if (state.grid && state.player.alive)
 	{
-		var view_proj = graphics.camera.projectionMatrix.clone();
-		view_proj.multiply(graphics.camera.matrixWorldInverse);
+		// movement controls
+		var player_velocity = new THREE.Vector2();
 
-		var inv_view_proj = new THREE.Matrix4();
-		inv_view_proj.getInverse(view_proj);
-
-		var mouse_x = (global.mouse.x / window.innerWidth) * 2.0 - 1.0;
-		var mouse_y = (1.0 - (global.mouse.y / window.innerHeight)) * 2.0 - 1.0;
-		var ray =
-		[
-			mouse_x, mouse_y, 0.0,
-			mouse_x, mouse_y, 1.0,
-		];
-
-		inv_view_proj.applyToVector3Array(ray);
-
-		// intersect with plane
-		var ray_start = new THREE.Vector3(ray[0], ray[1], ray[2]);
-		var ray_end = new THREE.Vector3(ray[3], ray[4], ray[5]);
-		var d = ray_start.z / (ray_start.z - ray_end.z);
-
-		var target = new THREE.Vector2
-		(
-			ray_start.x + (ray_end.x - ray_start.x) * d,
-			ray_start.y + (ray_end.y - ray_start.y) * d
-		);
-
-		player_velocity.copy(target).sub(state.player.pos);
-		graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
-		var coin_multiplier = 0.6 + (0.4 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
-		player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
-		var mask;
-		if (state.bank_coins < state.door_coins)
-			mask = 0xffffff; // collide with the door, don't go through it
-		else
-			mask = ~con.masks.door;
-
-		var current_speed_max = con.speed_max * coin_multiplier;
-		var collided_mask = func.move_body(state.player.pos, player_velocity, dt, current_speed_max, mask, true);
-
-		if ((collided_mask & con.masks.door) && state.player.coins.length > 0)
+		// mouse controls
+		if (global.mouse_down)
 		{
-			func.audio(con.audio.coins);
-			state.bank_coins += state.player.coins.length;
-			state.player.coins.length = 0;
+			var view_proj = graphics.camera.projectionMatrix.clone();
+			view_proj.multiply(graphics.camera.matrixWorldInverse);
+
+			var inv_view_proj = new THREE.Matrix4();
+			inv_view_proj.getInverse(view_proj);
+
+			var mouse_x = (global.mouse.x / window.innerWidth) * 2.0 - 1.0;
+			var mouse_y = (1.0 - (global.mouse.y / window.innerHeight)) * 2.0 - 1.0;
+			var ray =
+			[
+				mouse_x, mouse_y, 0.0,
+				mouse_x, mouse_y, 1.0,
+			];
+
+			inv_view_proj.applyToVector3Array(ray);
+
+			// intersect with plane
+			var ray_start = new THREE.Vector3(ray[0], ray[1], ray[2]);
+			var ray_end = new THREE.Vector3(ray[3], ray[4], ray[5]);
+			var d = ray_start.z / (ray_start.z - ray_end.z);
+
+			var target = new THREE.Vector2
+			(
+				ray_start.x + (ray_end.x - ray_start.x) * d,
+				ray_start.y + (ray_end.y - ray_start.y) * d
+			);
+
+			player_velocity.copy(target).sub(state.player.pos);
 		}
 
-		// footsteps
-		var speed = player_velocity.length();
-		if (speed > 0)
+		// gamepad controls
+		if (navigator.getGamepads)
 		{
-			global.footstep_counter += Math.max(1, speed) * dt;
-			if (global.footstep_counter > 1.5)
+			var gamepads = navigator.getGamepads();
+			if (gamepads.length > 0)
 			{
-				func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.3));
-				global.footstep_counter = 0;
+				var gamepad = gamepads[0];
+				var stick = new THREE.Vector2(gamepad.axes[0], gamepad.axes[1]);
+				if (stick.lengthSq() > 0)
+					player_velocity.copy(stick).multiplyScalar(con.speed_max / Math.max(1, player_velocity.length()));
 			}
 		}
 
-		// door
-		if (Math.floor(state.player.pos.x) === state.door.x
-			&& Math.floor(state.player.pos.y) === state.door.y
-			&& state.bank_coins >= state.door_coins)
+		// apply movement
+		if (player_velocity.lengthSq() > 0)
 		{
-			state.level++;
-			func.load_level(state.level);
+			graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
+
+			var coin_multiplier = 0.6 + (0.4 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
+			var current_speed_max = con.speed_max * coin_multiplier;
+
+			graphics.reticle.visible = true;
+			graphics.reticle.position.y = Math.min(con.speed_max / con.speed_multiplier, Math.max(1, player_velocity.length()));
+
+			player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
+			var mask;
+			if (state.bank_coins < state.door_coins)
+				mask = 0xffffff; // collide with the door, don't go through it
+			else
+				mask = ~con.masks.door;
+
+			var collided_mask = func.move_body(state.player.pos, player_velocity, dt, current_speed_max, mask, true);
+
+			if ((collided_mask & con.masks.door) && state.player.coins.length > 0)
+			{
+				func.audio(con.audio.coins);
+				state.bank_coins += state.player.coins.length;
+				state.player.coins.length = 0;
+			}
+
+			// footsteps
+			var speed = player_velocity.length();
+			if (speed > 0)
+			{
+				global.footstep_counter += Math.max(1, speed) * dt;
+				if (global.footstep_counter > 1.5)
+				{
+					func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.3));
+					global.footstep_counter = 0;
+				}
+			}
+
+			// door
+			if (Math.floor(state.player.pos.x) === state.door.x
+				&& Math.floor(state.player.pos.y) === state.door.y
+				&& state.bank_coins >= state.door_coins)
+			{
+				state.level++;
+				func.load_level(state.level);
+			}
 		}
+		else
+			graphics.reticle.visible = false;
 	}
 
 	graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
