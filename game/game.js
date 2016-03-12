@@ -1804,8 +1804,8 @@ func.update = function()
 			// gamepad controls
 			if (gamepad)
 			{
-				var stick = new THREE.Vector2(gamepad.axes[0], -gamepad.axes[1]);
-				if (stick.length() > 0.1)
+				var stick = new THREE.Vector2(gamepad.axes[0] * 0.5, gamepad.axes[1] * -0.5);
+				if (stick.length() > 0.075)
 					player_velocity.copy(stick).multiplyScalar(con.speed_max / Math.max(1, stick.length()));
 			}
 
@@ -1832,15 +1832,20 @@ func.update = function()
 				if ((collided_mask & con.masks.door) && state.player.coins.length > 0)
 				{
 					func.audio(con.audio.coins);
-					state.bank_coins += state.player.coins.length;
-					state.player.coins.length = 0;
+					var new_bank_coins = Math.min(state.bank_coins + state.player.coins.length, state.door_coins);
+					var coins_banked = new_bank_coins - state.bank_coins;
+					state.bank_coins = new_bank_coins;
+					state.player.coins.length -= coins_banked;
 
-					var spawn_point = func.random_goal(state.player.pos, 50, func.cell_is_very_far_from_player);
-					if (spawn_point !== null)
+					if (coins_banked > 0)
 					{
-						func.monster_spawn(spawn_point);
-						func.audio(con.audio.growl);
-						func.msg('+1 MONSTER');
+						var spawn_point = func.random_goal(state.player.pos, 50, func.cell_is_very_far_from_player);
+						if (spawn_point !== null)
+						{
+							func.monster_spawn(spawn_point);
+							func.audio(con.audio.growl);
+							func.msg('+1 MONSTER');
+						}
 					}
 				}
 
