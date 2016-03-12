@@ -7,19 +7,19 @@ var con =
 	camera_size: 12.0,
 	coin_flip_time: 0.5,
 	coin_velocity_damping: 3.0,
-	damage_time: 1.5,
+	damage_time: 2.0,
 	light_tip_time: 0.25,
 	light_cell_size: 3,
 	monster_normal_speed: 2,
 	monster_max_speed: 7,
-	monster_detect_radius: 5.5,
+	monster_detect_radius: 6,
 	monster_chase_radius: 7,
 	monster_damage_radius: 3,
 	monster_attack_radius: 1.5,
 	monster_attack_delay: 0.5,
 	monster_post_attack_delay: 0.75,
 	monster_scare_radius: 4,
-	monster_alert_radius: 16,
+	monster_alert_radius: 20,
 	body_radius: 0.4,
 	fade_time: 3,
 	msg_time: 2.5,
@@ -30,6 +30,7 @@ var con =
 		'FOYER',
 		'HALLWAY',
 		'LIVING ROOM',
+		'STUDY',
 		'YOU PULLED IT OFF!',
 	],
 	collision_directions:
@@ -267,7 +268,7 @@ var func = {};
 
 func.msg = function(msg)
 {
-	graphics.msg_timer = (state.level === 0 || state.level === con.level_names.length - 1) ? 0 : con.msg_time;
+	graphics.msg_timer = state.level === 0 ? 0 : con.msg_time;
 	if (graphics.msg)
 		graphics.ui.remove(graphics.msg);
 	if (msg)
