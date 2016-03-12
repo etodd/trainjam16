@@ -11,12 +11,13 @@ var con =
 	light_tip_time: 0.25,
 	light_cell_size: 3,
 	monster_normal_speed: 2,
-	monster_max_speed: 5,
-	monster_detect_radius: 5,
-	monster_chase_radius: 8,
+	monster_max_speed: 7,
+	monster_detect_radius: 5.5,
+	monster_chase_radius: 7,
 	monster_damage_radius: 3,
 	monster_attack_radius: 1.5,
 	monster_attack_delay: 0.5,
+	monster_post_attack_delay: 0.75,
 	monster_scare_radius: 4,
 	monster_alert_radius: 16,
 	body_radius: 0.4,
@@ -29,6 +30,7 @@ var con =
 		'FOYER',
 		'HALLWAY',
 		'LIVING ROOM',
+		'YOU PULLED IT OFF!',
 	],
 	collision_directions:
 	{
@@ -85,15 +87,19 @@ var con =
 	speed_max: 5.0,
 	audio:
 	{
+		coin: [ 'snd/coin.wav', ],
+		coins: [ 'snd/coins.wav', ],
+		howl: [ 'snd/howl.wav', ],
+		whimper: [ 'snd/whimper.wav', ],
+		door_close: [ 'snd/door_close.wav', ],
+		monster_loop: [ 'snd/monster_loop.wav', ],
+		menu_music: [ 'snd/menu_music.mp3' ],
+		end_music: [ 'snd/end_music.mp3' ],
 		attack:
 		[
 			'snd/attack0.wav',
 			'snd/attack1.wav',
 			'snd/attack2.wav',
-		],
-		coin:
-		[
-			'snd/coin.wav',
 		],
 		footstep:
 		[
@@ -104,22 +110,6 @@ var con =
 			'snd/footstep4.wav',
 			'snd/footstep5.wav',
 			'snd/footstep6.wav',
-		],
-		howl:
-		[
-			'snd/howl.wav',
-		],
-		door_close:
-		[
-			'snd/door_close.wav',
-		],
-		monster_loop:
-		[
-			'snd/monster_loop.wav',
-		],
-		coins:
-		[
-			'snd/coins.wav',
 		],
 		light_tip:
 		[
@@ -207,6 +197,7 @@ var graphics =
 var global =
 {
 	level_timer: 0,
+	music: null,
 	monster_loop_gain: null,
 	audio_context: null,
 	clock: new THREE.Clock(),
@@ -276,7 +267,7 @@ var func = {};
 
 func.msg = function(msg)
 {
-	graphics.msg_timer = state.level === 0 ? 0 : con.msg_time;
+	graphics.msg_timer = (state.level === 0 || state.level === con.level_names.length - 1) ? 0 : con.msg_time;
 	if (graphics.msg)
 		graphics.ui.remove(graphics.msg);
 	if (msg)
@@ -619,6 +610,16 @@ func.create_text = function(value, size, parent)
 	return text;
 };
 
+func.music = function(snds)
+{
+	var source = global.audio_context.createBufferSource();
+	source.buffer = snds[0];
+	source.loop = true;
+	source.connect(global.audio_context.destination);
+	source.start(0);
+	return source;
+};
+
 func.refresh_door_text = function()
 {
 	if (graphics.door_text.mesh)
@@ -649,6 +650,11 @@ func.load_level = function(level)
 	graphics.light_models.length = 0;
 	graphics.monsters.length = 0;
 	graphics.door_text.mesh = null;
+	if (global.music)
+	{
+		global.music.stop();
+		global.music = null;
+	}
 
 	if (graphics.ground)
 	{
@@ -664,7 +670,7 @@ func.load_level = function(level)
 
 	// load new stuff
 	state.level = level;
-	state.player.alive = state.level > 0;
+	state.player.alive = state.level !== 0 && state.level !== con.level_names.length - 1;
 	global.level_timer = 0;
 
 	var texture = graphics.level[state.level];
@@ -799,7 +805,7 @@ func.load_level = function(level)
 	if (state.player.alive)
 		graphics.camera_pos_target.copy(state.player.pos);
 	else
-		graphics.camera_pos_target.set(state.size.x * 0.5, 0);
+		graphics.camera_pos_target.set(state.size.x * 0.5, 4);
 	graphics.camera_pos.copy(graphics.camera_pos_target);
 	
 	func.msg(con.level_names[state.level]);
@@ -810,7 +816,10 @@ func.load_level = function(level)
 		graphics.logo = new THREE.Sprite(material);
 		graphics.scenery.push(graphics.logo);
 		graphics.ui.add(graphics.logo);
+		global.music = func.music(con.audio.menu_music);
 	}
+	else if (state.level === con.level_names.length - 1)
+		global.music = func.music(con.audio.end_music);
 	else
 		func.audio(con.audio.door_close);
 };
@@ -1249,6 +1258,7 @@ func.monster_check_attack = function(monster)
 	{
 		monster.state = con.monster_states.attack;
 		monster.timer = con.monster_attack_delay;
+		monster.path.length = 0;
 		func.audio(con.audio.growl);
 	}
 };
@@ -1326,7 +1336,7 @@ func.update = function()
 			global.footstep_counter += Math.max(1, speed) * dt;
 			if (global.footstep_counter > 1.5)
 			{
-				func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.25));
+				func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.3));
 				global.footstep_counter = 0;
 			}
 		}
@@ -1466,7 +1476,6 @@ func.update = function()
 					{
 						monster.state = con.monster_states.chase;
 						monster.path.length = 0;
-						monster.timer = 0.5;
 					}
 				}
 				else
@@ -1485,6 +1494,7 @@ func.update = function()
 					{
 						// followed path, can't find them
 						monster.state = con.monster_states.normal;
+						monster.path.length = 0;
 						monster.timer = 3.0;
 					}
 				}
@@ -1529,6 +1539,7 @@ func.update = function()
 								state.player.alive = false;
 								func.msg('YOU DIED');
 								monster.state = con.monster_states.normal;
+								monster.path.length = 0;
 								monster.timer = 3.0;
 							}
 						}
@@ -1537,11 +1548,12 @@ func.update = function()
 							// missed; keep chasing
 						}
 					}
-					else if (monster.timer < -1.0)
+					else if (monster.timer < -con.monster_post_attack_delay)
 					{
 						// attack is done
 						monster.state = state.player.alive ? con.monster_states.chase : con.monster_states.normal;
-						monster.timer = 0.0;
+						monster.timer = 0;
+						monster.path.length = 0;
 					}
 				}
 				break;
@@ -1550,9 +1562,9 @@ func.update = function()
 				{
 					monster.state = con.monster_states.chase;
 					monster.timer = 0;
+					monster.path.length = 0;
 				}
-
-				if (monster.path.length === 0)
+				else if (monster.path.length === 0)
 				{
 					monster.state = con.monster_states.normal;
 					monster.timer = 3.0;
@@ -1574,7 +1586,7 @@ func.update = function()
 		graphic.position.set(monster.pos.x, monster.pos.y, 0);
 	}
 	if (closest_monster > 0)
-		global.monster_loop_gain.gain.value = Math.max(0, 0.3 * (1.0 - (closest_monster / (con.camera_size * 0.75))));
+		global.monster_loop_gain.gain.value = Math.max(0, 0.25 * (1.0 - (closest_monster / (con.camera_size * 0.75))));
 	else
 		global.monster_loop_gain.gain.value = 0.0;
 
@@ -1632,11 +1644,11 @@ func.update = function()
 					if (distance < con.monster_scare_radius)
 					{
 						// run away
-						// todo: whimper sound
 						var path = [];
 						func.astar(monster.pos, func.random_goal(light_model.pos, 30, func.cell_is_far_from_player), path);
 						if (path.length > 0)
 						{
+							func.audio(con.audio.whimper, 1.0, 10.0);
 							monster.state = con.monster_states.hide;
 							monster.path = path;
 						}
