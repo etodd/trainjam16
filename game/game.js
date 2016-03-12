@@ -21,6 +21,7 @@ var con =
 	monster_scare_radius: 4,
 	monster_alert_radius: 20,
 	body_radius: 0.4,
+	load_bar_size: new THREE.Vector2(5, 1),
 	fade_time: 3,
 	msg_time: 2.5,
 	glare_color: new THREE.Color(1, 1, 0.7),
@@ -151,6 +152,8 @@ var state =
 var graphics =
 {
 	overlay: null,
+	load_bar: null,
+	load_bar_background: null,
 	logo: null,
 	ui: null,
 	texture_loader: new THREE.TextureLoader(),
@@ -198,6 +201,8 @@ var graphics =
 
 var global =
 {
+	load_total: 0,
+	load_count: 0,
 	level_timer: 0,
 	music: null,
 	monster_loop_gain: null,
@@ -408,11 +413,21 @@ func.init = function()
 	graphics.scene.add(graphics.ui);
 
 	{
-		var material = new THREE.SpriteMaterial({ color: 0x000000, });
-		graphics.overlay = new THREE.Sprite(material);
+		graphics.overlay = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0x000000, }));
 		graphics.overlay.position.z = -1;
 		graphics.ui.add(graphics.overlay);
 		graphics.overlay.visible = false;
+	}
+
+	{
+		graphics.load_bar = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffffff, }));
+		graphics.load_bar.position.z = -1;
+		graphics.load_bar.scale.set(0, con.load_bar_size.y, 1);
+		graphics.ui.add(graphics.load_bar);
+		graphics.load_bar_background = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xaaaaaa, }));
+		graphics.load_bar_background.position.z = -2;
+		graphics.load_bar_background.scale.set(con.load_bar_size.x, con.load_bar_size.y, 1);
+		graphics.ui.add(graphics.load_bar_background);
 	}
 
 	graphics.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -430,9 +445,11 @@ func.init = function()
 
 	for (var geom_name in graphics.geom)
 	{
+		global.load_total++;
 		let local_geom_name = geom_name;
 		graphics.model_loader.load('geom/' + geom_name + '.js', function(geometry, materials)
 		{
+			global.load_count++;
 			graphics.geom[local_geom_name] = geometry;
 			func.check_done_loading();
 		});
@@ -440,6 +457,7 @@ func.init = function()
 
 	for (var texture_name in graphics.texture)
 	{
+		global.load_total++;
 		let local_texture_name = texture_name;
 		graphics.texture_loader.load
 		(
@@ -448,6 +466,7 @@ func.init = function()
 			{
 				texture.minFilter = texture.magFilter = THREE.NearestFilter;
 				graphics.texture[local_texture_name] = texture;
+				global.load_count++;
 				func.check_done_loading();
 			},
 			func.error
@@ -456,6 +475,7 @@ func.init = function()
 
 	for (var level_name in graphics.level)
 	{
+		global.load_total++;
 		let local_level_name = level_name;
 		graphics.texture_loader.load
 		(
@@ -463,15 +483,18 @@ func.init = function()
 			function(texture)
 			{
 				graphics.level[local_level_name] = texture;
+				global.load_count++;
 				func.check_done_loading();
 			},
 			func.error
 		);
 	}
 
+	global.load_total++;
 	new THREE.FontLoader().load('helvetiker_bold.typeface.js', function (response)
 	{
 		graphics.font = response;
+		global.load_count++;
 		func.check_done_loading();
 	});
 
@@ -486,13 +509,30 @@ func.init = function()
 		{
 			let snd_index = i;
 			var url = snds[i];
+			global.load_total++;
 			func.load_audio(url, function(buffer)
 			{
 				snds[snd_index] = buffer;
+				global.load_count++;
 				func.check_done_loading();
 			});
 		}
 	}
+
+	$(window).on('resize', func.on_resize);
+
+	window.focus();
+	$(document).on('keydown', func.on_keydown);
+	$(document).on('keyup', func.on_keyup);
+
+	$(document).on('mousedown', func.on_mousedown);
+	$(document).on('mousemove', func.on_mousemove);
+	$(document).on('mouseup', func.on_mouseup);
+	$(document).on('touchstart', func.on_mousedown);
+	$(document).on('touchmove', func.on_mousemove);
+	$(document).on('touchend', func.on_mouseup);
+
+	func.update();
 };
 
 func.audio = function(snds, volume, min_time_threshold)
@@ -536,36 +576,13 @@ func.audio = function(snds, volume, min_time_threshold)
 
 func.check_done_loading = function()
 {
-	if (!graphics.font)
+	if (global.load_count < global.load_total)
 		return false;
 
-	for (var name in con.audio)
-	{
-		var snds = con.audio[name];
-		for (var i = 0; i < snds.length; i++)
-		{
-			if (typeof snds[i] === 'string')
-				return false;
-		}
-	}
-
-	for (var name in graphics.geom)
-	{
-		if (!graphics.geom[name])
-			return false;
-	}
-
-	for (var name in graphics.texture)
-	{
-		if (!graphics.texture[name])
-			return false;
-	}
-
-	for (var name in graphics.level)
-	{
-		if (!graphics.level[name])
-			return false;
-	}
+	graphics.ui.remove(graphics.load_bar);
+	graphics.ui.remove(graphics.load_bar_background);
+	graphics.load_bar = null;
+	graphics.load_bar_background = null;
 
 	// monster loop
 	{
@@ -586,19 +603,6 @@ func.check_done_loading = function()
 	graphics.geom.glares.vertices.push(new THREE.Vector3(0, 0.8, 2.5));
 	graphics.geom.glares.vertices.push(new THREE.Vector3(0, -0.8, 2.5));
 
-	$(window).on('resize', func.on_resize);
-
-	window.focus();
-	$(document).on('keydown', func.on_keydown);
-	$(document).on('keyup', func.on_keyup);
-
-	$(document).on('mousedown', func.on_mousedown);
-	$(document).on('mousemove', func.on_mousemove);
-	$(document).on('mouseup', func.on_mouseup);
-	$(document).on('touchstart', func.on_mousedown);
-	$(document).on('touchmove', func.on_mousemove);
-	$(document).on('touchend', func.on_mouseup);
-
 	graphics.player = func.add_mesh(graphics.geom.player, 0xff0000);
 	graphics.player_light = new THREE.PointLight(0xaa3311, 1, 5);
 	graphics.player_light.position.set(0, 0, 1.5);
@@ -607,8 +611,6 @@ func.check_done_loading = function()
 	graphics.player.add(graphics.reticle);
 
 	func.load_level(state.level);
-
-	func.update();
 
 	return true;
 };
@@ -1337,7 +1339,7 @@ func.gamepad = function()
 		if (gamepads.length > 0)
 		{
 			var gamepad = gamepads[0];
-			if (gamepad.connected)
+			if (gamepad && gamepad.connected)
 				return gamepad;
 		}
 	}
@@ -1350,501 +1352,527 @@ func.update = function()
 
 	var dt = global.clock.getDelta();
 
-	global.button_down = false;
-	var gamepad = func.gamepad();
-	if (gamepad)
+	if (global.load_count < global.load_total)
 	{
-		for (var i = 0; i < gamepad.buttons.length; i++)
-		{
-			if (gamepad.buttons[i].pressed)
-			{
-				global.button_down = true;
-				break;
-			}
-		}
+		graphics.load_bar.scale.x = con.load_bar_size.x * (global.load_count / global.load_total);
+		graphics.load_bar.position.x = con.load_bar_size.x * -0.5 + (graphics.load_bar.scale.x * 0.5);
 	}
-
-	global.level_timer += dt;
-
-	// player
-	if (state.player.damage_timer > 0)
-		state.player.damage_timer -= dt;
-
-	if (state.grid && state.player.alive)
+	else
 	{
-		// movement controls
-		var player_velocity = new THREE.Vector2();
-
-		// mouse controls
-		if (global.mouse_down)
-		{
-			var view_proj = graphics.camera.projectionMatrix.clone();
-			view_proj.multiply(graphics.camera.matrixWorldInverse);
-
-			var inv_view_proj = new THREE.Matrix4();
-			inv_view_proj.getInverse(view_proj);
-
-			var mouse_x = (global.mouse.x / window.innerWidth) * 2.0 - 1.0;
-			var mouse_y = (1.0 - (global.mouse.y / window.innerHeight)) * 2.0 - 1.0;
-			var ray =
-			[
-				mouse_x, mouse_y, 0.0,
-				mouse_x, mouse_y, 1.0,
-			];
-
-			inv_view_proj.applyToVector3Array(ray);
-
-			// intersect with plane
-			var ray_start = new THREE.Vector3(ray[0], ray[1], ray[2]);
-			var ray_end = new THREE.Vector3(ray[3], ray[4], ray[5]);
-			var d = ray_start.z / (ray_start.z - ray_end.z);
-
-			var target = new THREE.Vector2
-			(
-				ray_start.x + (ray_end.x - ray_start.x) * d,
-				ray_start.y + (ray_end.y - ray_start.y) * d
-			);
-
-			player_velocity.copy(target).sub(state.player.pos);
-		}
-
-		// gamepad controls
+		global.button_down = false;
+		var gamepad = func.gamepad();
 		if (gamepad)
 		{
-			var stick = new THREE.Vector2(gamepad.axes[0], -gamepad.axes[1]);
-			if (stick.length() > 0.1)
-				player_velocity.copy(stick).multiplyScalar(con.speed_max / Math.max(1, stick.length()));
-		}
-
-		// apply movement
-		if (player_velocity.lengthSq() > 0)
-		{
-			graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
-
-			var coin_multiplier = 0.6 + (0.4 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
-			var current_speed_max = con.speed_max * coin_multiplier;
-
-			graphics.reticle.visible = true;
-			graphics.reticle.position.y = Math.min(con.speed_max / con.speed_multiplier, Math.max(1, player_velocity.length()));
-
-			player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
-			var mask;
-			if (state.bank_coins < state.door_coins)
-				mask = 0xffffff; // collide with the door, don't go through it
-			else
-				mask = ~con.masks.door;
-
-			var collided_mask = func.move_body(state.player.pos, player_velocity, dt, current_speed_max, mask, true);
-
-			if ((collided_mask & con.masks.door) && state.player.coins.length > 0)
+			for (var i = 0; i < gamepad.buttons.length; i++)
 			{
-				func.audio(con.audio.coins);
-				state.bank_coins += state.player.coins.length;
-				state.player.coins.length = 0;
-			}
-
-			// footsteps
-			var speed = player_velocity.length();
-			if (speed > 0)
-			{
-				global.footstep_counter += Math.max(1, speed) * dt;
-				if (global.footstep_counter > 1.5)
+				if (gamepad.buttons[i].pressed)
 				{
-					func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.3));
-					global.footstep_counter = 0;
-				}
-			}
-
-			// door
-			if (Math.floor(state.player.pos.x) === state.door.x
-				&& Math.floor(state.player.pos.y) === state.door.y
-				&& state.bank_coins >= state.door_coins)
-			{
-				state.level++;
-				func.load_level(state.level);
-			}
-		}
-		else
-			graphics.reticle.visible = false;
-	}
-
-	graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
-	state.player.light = Math.max(0, state.player.light + dt * -0.0035);
-	func.flicker_light(graphics.player_light, 0, state.player.light);
-
-	// coins
-	while (graphics.coins.length < state.coins.length)
-		graphics.coins.push(func.add_mesh(graphics.geom.coin, 0xffff00));
-	for (var i = 0; i < state.coins.length; i++)
-	{
-		var coin = state.coins[i];
-		var graphic = graphics.coins[i];
-		var diff = coin.pos.clone().sub(state.player.pos);
-		if (coin.velocity.lengthSq() > 0)
-		{
-			// damp velocity
-			var normalized = coin.velocity.clone();
-			normalized.normalize();
-			coin.velocity.sub(normalized.multiplyScalar(Math.min(dt * con.coin_velocity_damping, coin.velocity.length())));
-			// move coin
-			func.move_body(coin.pos, coin.velocity, dt, con.speed_max * 2, 0xffffff, false);
-		}
-
-		if (state.player.alive && diff.length() < 1)
-		{
-			if (state.player.coins.length < con.max_capacity && state.player.damage_timer <= 0)
-			{
-				func.audio(con.audio.coin);
-				state.player.coins.push(
-				{
-					pos: coin.pos,
-					anim_time: 0,
-				});
-				state.coins.splice(i, 1);
-				i--;
-			}
-			else
-			{
-				// push coin around
-				diff.normalize();
-				var dot = player_velocity.dot(diff);
-				if (dot > 0.0)
-				{
-					var coin_velocity = diff.clone();
-					coin_velocity.multiplyScalar(dot);
-					func.move_body(coin.pos, coin_velocity, dt);
-					graphic.position.set(coin.pos.x, coin.pos.y, 0);
+					global.button_down = true;
+					break;
 				}
 			}
 		}
-		else
-			graphic.position.set(coin.pos.x, coin.pos.y, 0);
-	}
-	while (graphics.coins.length > state.coins.length)
-	{
-		graphics.scene.remove(graphics.coins[graphics.coins.length - 1]);
-		graphics.coins.length--;
-	}
 
-	// player coins
-	while (graphics.player_coins.length < state.player.coins.length)
-	{
-		var coin = func.add_mesh(graphics.geom.coin, 0xffff00);
-		graphics.player_coins.push(coin);
-	}
-	var coin_end_pos = new THREE.Vector3();
-	for (var i = 0; i < state.player.coins.length; i++)
-	{
-		var coin = state.player.coins[i];
-		var graphic = graphics.player_coins[i];
-		coin_end_pos.set(state.player.pos.x, state.player.pos.y, 1 + i * 0.3);
-		if (coin.anim_time < con.coin_flip_time)
-		{
-			coin.anim_time += dt;
-			var blend = coin.anim_time / con.coin_flip_time;
-			graphic.position.set(coin.pos.x, coin.pos.y, 0);
-			graphic.position.lerp(coin_end_pos, blend);
-			graphic.position.z += Math.sin(blend * Math.PI) * 2.0;
-			graphic.rotation.set((1.0 - blend) * Math.PI * 4.0, 0, 0);
-		}
-		else
-		{
-			graphic.position.copy(coin_end_pos);
-			graphic.rotation.set(0, 0, 0);
-		}
-	}
-	while (graphics.player_coins.length > state.player.coins.length)
-	{
-		graphics.scene.remove(graphics.player_coins[graphics.player_coins.length - 1]);
-		graphics.player_coins.length--;
-	}
+		global.level_timer += dt;
 
-	// todo: monster loop sound
-	// monsters
-	var closest_monster = -1;
-	for (var i = 0; i < state.monsters.length; i++)
-	{
-		var monster = state.monsters[i];
-		var graphic = graphics.monsters[i];
-		var distance = monster.pos.clone().sub(graphics.camera_pos).length();
-		if (closest_monster < 0 || distance < closest_monster)
-			closest_monster = distance;
-		switch (monster.state)
+		// player
+		if (state.player.damage_timer > 0)
+			state.player.damage_timer -= dt;
+
+		if (state.grid && state.player.alive)
 		{
-			case con.monster_states.normal: // wandering
-				if (monster.path.length === 0)
+			// movement controls
+			var player_velocity = new THREE.Vector2();
+
+			// mouse controls
+			if (global.mouse_down)
+			{
+				var view_proj = graphics.camera.projectionMatrix.clone();
+				view_proj.multiply(graphics.camera.matrixWorldInverse);
+
+				var inv_view_proj = new THREE.Matrix4();
+				inv_view_proj.getInverse(view_proj);
+
+				var mouse_x = (global.mouse.x / window.innerWidth) * 2.0 - 1.0;
+				var mouse_y = (1.0 - (global.mouse.y / window.innerHeight)) * 2.0 - 1.0;
+				var ray =
+				[
+					mouse_x, mouse_y, 0.0,
+					mouse_x, mouse_y, 1.0,
+				];
+
+				inv_view_proj.applyToVector3Array(ray);
+
+				// intersect with plane
+				var ray_start = new THREE.Vector3(ray[0], ray[1], ray[2]);
+				var ray_end = new THREE.Vector3(ray[3], ray[4], ray[5]);
+				var d = ray_start.z / (ray_start.z - ray_end.z);
+
+				var target = new THREE.Vector2
+				(
+					ray_start.x + (ray_end.x - ray_start.x) * d,
+					ray_start.y + (ray_end.y - ray_start.y) * d
+				);
+
+				player_velocity.copy(target).sub(state.player.pos);
+			}
+
+			// gamepad controls
+			if (gamepad)
+			{
+				var stick = new THREE.Vector2(gamepad.axes[0], -gamepad.axes[1]);
+				if (stick.length() > 0.1)
+					player_velocity.copy(stick).multiplyScalar(con.speed_max / Math.max(1, stick.length()));
+			}
+
+			// apply movement
+			if (player_velocity.lengthSq() > 0)
+			{
+				graphics.player.rotation.z = -Math.atan2(player_velocity.x, player_velocity.y);
+
+				var coin_multiplier = 0.6 + (0.4 * (con.max_capacity - state.player.coins.length) / con.max_capacity);
+				var current_speed_max = con.speed_max * coin_multiplier;
+
+				graphics.reticle.visible = true;
+				graphics.reticle.position.y = Math.min(con.speed_max / con.speed_multiplier, Math.max(1, player_velocity.length()));
+
+				player_velocity.multiplyScalar(con.speed_multiplier * coin_multiplier);
+				var mask;
+				if (state.bank_coins < state.door_coins)
+					mask = 0xffffff; // collide with the door, don't go through it
+				else
+					mask = ~con.masks.door;
+
+				var collided_mask = func.move_body(state.player.pos, player_velocity, dt, current_speed_max, mask, true);
+
+				if ((collided_mask & con.masks.door) && state.player.coins.length > 0)
 				{
-					monster.timer -= dt;
-					if (monster.timer < 0.0)
+					func.audio(con.audio.coins);
+					state.bank_coins += state.player.coins.length;
+					state.player.coins.length = 0;
+				}
+
+				// footsteps
+				var speed = player_velocity.length();
+				if (speed > 0)
+				{
+					global.footstep_counter += Math.max(1, speed) * dt;
+					if (global.footstep_counter > 1.5)
 					{
-						func.astar(monster.pos, func.random_goal(monster.pos, 10), monster.path);
-						monster.timer = 0.5 + Math.random() * 3.0;
+						func.audio(con.audio.footstep, Math.max(0.075, (speed / current_speed_max) * 0.3));
+						global.footstep_counter = 0;
 					}
 				}
-				func.monster_move(monster, con.monster_normal_speed, dt);
 
-				if (state.player.alive)
+				// door
+				if (Math.floor(state.player.pos.x) === state.door.x
+					&& Math.floor(state.player.pos.y) === state.door.y
+					&& state.bank_coins >= state.door_coins)
 				{
-					if (state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
-						monster.timer2 += dt;
-					else
-						monster.timer2 = 0;
-					if (monster.timer2 > 1.0)
+					state.level++;
+					func.load_level(state.level);
+				}
+			}
+			else
+				graphics.reticle.visible = false;
+		}
+
+		graphics.player.position.set(state.player.pos.x, state.player.pos.y, 0);
+		state.player.light = Math.max(0, state.player.light + dt * -0.0035);
+		func.flicker_light(graphics.player_light, 0, state.player.light);
+
+		// coins
+		while (graphics.coins.length < state.coins.length)
+			graphics.coins.push(func.add_mesh(graphics.geom.coin, 0xffff00));
+		for (var i = 0; i < state.coins.length; i++)
+		{
+			var coin = state.coins[i];
+			var graphic = graphics.coins[i];
+			var diff = coin.pos.clone().sub(state.player.pos);
+			if (coin.velocity.lengthSq() > 0)
+			{
+				// damp velocity
+				var normalized = coin.velocity.clone();
+				normalized.normalize();
+				coin.velocity.sub(normalized.multiplyScalar(Math.min(dt * con.coin_velocity_damping, coin.velocity.length())));
+				// move coin
+				func.move_body(coin.pos, coin.velocity, dt, con.speed_max * 2, 0xffffff, false);
+			}
+
+			if (state.player.alive && diff.length() < 1)
+			{
+				if (state.player.coins.length < con.max_capacity && state.player.damage_timer <= 0)
+				{
+					func.audio(con.audio.coin);
+					state.player.coins.push(
 					{
-						monster.state = con.monster_states.chase;
-						monster.path.length = 0;
-					}
+						pos: coin.pos,
+						anim_time: 0,
+					});
+					state.coins.splice(i, 1);
+					i--;
 				}
 				else
-					monster.timer2 = 0;
-
-				func.monster_check_attack(monster);
-				break;
-			case con.monster_states.chase: // chasing the player
-				monster.timer -= dt;
-				if (monster.timer < 0 || monster.path.length === 0)
 				{
-					monster.timer = 0.5;
-					if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_chase_radius)
-						func.astar(monster.pos, state.player.pos, monster.path); // update path
-					else if (monster.path.length === 0)
+					// push coin around
+					diff.normalize();
+					var dot = player_velocity.dot(diff);
+					if (dot > 0.0)
 					{
-						// followed path, can't find them
-						monster.state = con.monster_states.normal;
-						monster.path.length = 0;
-						monster.timer = 3.0;
+						var coin_velocity = diff.clone();
+						coin_velocity.multiplyScalar(dot);
+						func.move_body(coin.pos, coin_velocity, dt);
+						graphic.position.set(coin.pos.x, coin.pos.y, 0);
 					}
 				}
+			}
+			else
+				graphic.position.set(coin.pos.x, coin.pos.y, 0);
+		}
+		while (graphics.coins.length > state.coins.length)
+		{
+			graphics.scene.remove(graphics.coins[graphics.coins.length - 1]);
+			graphics.coins.length--;
+		}
 
-				if (monster.path.length > 0)
-				{
-					func.monster_move(monster, con.monster_max_speed, dt);
-					func.monster_check_attack(monster);
-				}
-				break;
-			case con.monster_states.attack: // attacking the player
-				var original_timer = monster.timer;
-				monster.timer -= dt;
-				if (monster.timer < 0)
-				{
-					if (original_timer >= 0.0)
+		// player coins
+		while (graphics.player_coins.length < state.player.coins.length)
+		{
+			var coin = func.add_mesh(graphics.geom.coin, 0xffff00);
+			graphics.player_coins.push(coin);
+		}
+		var coin_end_pos = new THREE.Vector3();
+		for (var i = 0; i < state.player.coins.length; i++)
+		{
+			var coin = state.player.coins[i];
+			var graphic = graphics.player_coins[i];
+			coin_end_pos.set(state.player.pos.x, state.player.pos.y, 1 + i * 0.3);
+			if (coin.anim_time < con.coin_flip_time)
+			{
+				coin.anim_time += dt;
+				var blend = coin.anim_time / con.coin_flip_time;
+				graphic.position.set(coin.pos.x, coin.pos.y, 0);
+				graphic.position.lerp(coin_end_pos, blend);
+				graphic.position.z += Math.sin(blend * Math.PI) * 2.0;
+				graphic.rotation.set((1.0 - blend) * Math.PI * 4.0, 0, 0);
+			}
+			else
+			{
+				graphic.position.copy(coin_end_pos);
+				graphic.rotation.set(0, 0, 0);
+			}
+		}
+		while (graphics.player_coins.length > state.player.coins.length)
+		{
+			graphics.scene.remove(graphics.player_coins[graphics.player_coins.length - 1]);
+			graphics.player_coins.length--;
+		}
+
+		// todo: monster loop sound
+		// monsters
+		var closest_monster = -1;
+		for (var i = 0; i < state.monsters.length; i++)
+		{
+			var monster = state.monsters[i];
+			var graphic = graphics.monsters[i];
+			var distance = monster.pos.clone().sub(graphics.camera_pos).length();
+			if (closest_monster < 0 || distance < closest_monster)
+				closest_monster = distance;
+			switch (monster.state)
+			{
+				case con.monster_states.normal: // wandering
+					if (monster.path.length === 0)
 					{
-						// attack
-						func.audio(con.audio.attack);
-						if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_damage_radius)
+						monster.timer -= dt;
+						if (monster.timer < 0.0)
 						{
-							// hit; do damage
-							if (state.player.coins.length > 0)
+							func.astar(monster.pos, func.random_goal(monster.pos, 10), monster.path);
+							monster.timer = 0.5 + Math.random() * 3.0;
+						}
+					}
+					func.monster_move(monster, con.monster_normal_speed, dt);
+
+					if (state.player.alive)
+					{
+						if (state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
+							monster.timer2 += dt;
+						else
+							monster.timer2 = 0;
+						if (monster.timer2 > 1.0)
+						{
+							monster.state = con.monster_states.chase;
+							monster.path.length = 0;
+						}
+					}
+					else
+						monster.timer2 = 0;
+
+					func.monster_check_attack(monster);
+					break;
+				case con.monster_states.chase: // chasing the player
+					monster.timer -= dt;
+					if (monster.timer < 0 || monster.path.length === 0)
+					{
+						monster.timer = 0.5;
+						if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_chase_radius)
+							func.astar(monster.pos, state.player.pos, monster.path); // update path
+						else if (monster.path.length === 0)
+						{
+							// followed path, can't find them
+							monster.state = con.monster_states.normal;
+							monster.path.length = 0;
+							monster.timer = 3.0;
+						}
+					}
+
+					if (monster.path.length > 0)
+					{
+						func.monster_move(monster, con.monster_max_speed, dt);
+						func.monster_check_attack(monster);
+					}
+					break;
+				case con.monster_states.attack: // attacking the player
+					var original_timer = monster.timer;
+					monster.timer -= dt;
+					if (monster.timer < 0)
+					{
+						if (original_timer >= 0.0)
+						{
+							// attack
+							func.audio(con.audio.attack);
+							if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_damage_radius)
 							{
-								// take coins
-								state.player.damage_timer = con.damage_time;
-								for (var j = 0; j < state.player.coins.length; j++)
+								// hit; do damage
+								if (state.player.coins.length > 0)
 								{
-									var pos = func.random_goal(state.player.pos, 2);
-									state.coins.push(
+									// take coins
+									state.player.damage_timer = con.damage_time;
+									for (var j = 0; j < state.player.coins.length; j++)
 									{
-										pos: pos,
-										velocity: pos.clone().sub(state.player.pos).multiplyScalar(4),
-									});
+										var pos = func.random_goal(state.player.pos, 2);
+										state.coins.push(
+										{
+											pos: pos,
+											velocity: pos.clone().sub(state.player.pos).multiplyScalar(4),
+										});
+									}
+									state.player.coins.length = 0;
+									func.audio(con.audio.coins);
 								}
-								state.player.coins.length = 0;
-								func.audio(con.audio.coins);
+								else
+								{
+									// they're dead
+									state.player.alive = false;
+									func.msg('YOU DIED');
+									monster.state = con.monster_states.normal;
+									monster.path.length = 0;
+									monster.timer = 3.0;
+								}
 							}
 							else
 							{
-								// they're dead
-								state.player.alive = false;
-								func.msg('YOU DIED');
-								monster.state = con.monster_states.normal;
-								monster.path.length = 0;
-								monster.timer = 3.0;
+								// missed; keep chasing
 							}
 						}
-						else
+						else if (monster.timer < -con.monster_post_attack_delay)
 						{
-							// missed; keep chasing
+							// attack is done
+							monster.state = state.player.alive ? con.monster_states.chase : con.monster_states.normal;
+							monster.timer = 0;
+							monster.path.length = 0;
 						}
 					}
-					else if (monster.timer < -con.monster_post_attack_delay)
+					break;
+				case con.monster_states.alert: // checking out a noise
+					if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
 					{
-						// attack is done
-						monster.state = state.player.alive ? con.monster_states.chase : con.monster_states.normal;
+						monster.state = con.monster_states.chase;
 						monster.timer = 0;
 						monster.path.length = 0;
 					}
-				}
-				break;
-			case con.monster_states.alert: // checking out a noise
-				if (state.player.alive && state.player.pos.clone().sub(monster.pos).length() < con.monster_detect_radius)
-				{
-					monster.state = con.monster_states.chase;
-					monster.timer = 0;
-					monster.path.length = 0;
-				}
-				else if (monster.path.length === 0)
-				{
-					monster.state = con.monster_states.normal;
-					monster.timer = 3.0;
-				}
-				func.monster_move(monster, con.monster_max_speed, dt);
-				func.monster_check_attack(monster);
-				break;
-			case con.monster_states.hide: // hiding from the player
-				if (monster.path.length === 0)
-				{
-					// done hiding
-					monster.state = con.monster_states.normal;
-					monster.timer = 3.0;
-				}
-				else
+					else if (monster.path.length === 0)
+					{
+						monster.state = con.monster_states.normal;
+						monster.timer = 3.0;
+					}
 					func.monster_move(monster, con.monster_max_speed, dt);
-				break;
-		}
-		graphic.position.set(monster.pos.x, monster.pos.y, 0);
-	}
-	if (closest_monster > 0)
-		global.monster_loop_gain.gain.value = Math.max(0, 0.25 * (1.0 - (closest_monster / (con.camera_size * 0.75))));
-	else
-		global.monster_loop_gain.gain.value = 0.0;
-
-	// door text
-	if (graphics.door
-		&& (graphics.door_text.bank_coins !== state.bank_coins || graphics.door_text.door_coins !== state.door_coins))
-		func.refresh_door_text();
-
-	// lights
-	for (var i = 0; i < state.light_models.length; i++)
-	{
-		var light_model = state.light_models[i];
-		var graphic = graphics.light_models[i];
-
-		if (light_model.on)
-		{
-			var glares = graphic.children[0];
-			glares.material.color.copy(con.glare_color);
-			glares.material.color.multiplyScalar(func.flicker(i, 0.05));
-		}
-
-		if (light_model.anim_time < con.light_tip_time)
-		{
-			light_model.anim_time = Math.min(light_model.anim_time + dt, con.light_tip_time);
-			var blend = light_model.anim_time / con.light_tip_time;
-			// rotate the model
-			switch (light_model.anim_dir)
-			{
-				case con.directions.right:
-					graphic.rotation.set(0, Math.PI * 0.5 * blend, 0);
+					func.monster_check_attack(monster);
 					break;
-				case con.directions.left:
-					graphic.rotation.set(0, Math.PI * -0.5 * blend, 0);
-					break;
-				case con.directions.forward:
-					graphic.rotation.set(Math.PI * -0.5 * blend, 0, 0);
-					break;
-				case con.directions.backward:
-					graphic.rotation.set(Math.PI * 0.5 * blend, 0, 0);
+				case con.monster_states.hide: // hiding from the player
+					if (monster.path.length === 0)
+					{
+						// done hiding
+						monster.state = con.monster_states.normal;
+						monster.timer = 3.0;
+					}
+					else
+						func.monster_move(monster, con.monster_max_speed, dt);
 					break;
 			}
-			if (blend == 1.0)
-			{
-				// kill the light
-				var point_light = graphic.children[1];
-				point_light.color.set(0, 0, 0);
-				var glares = graphic.children[0];
-				graphic.remove(glares);
+			graphic.position.set(monster.pos.x, monster.pos.y, 0);
+		}
+		if (closest_monster > 0)
+			global.monster_loop_gain.gain.value = Math.max(0, 0.25 * (1.0 - (closest_monster / (con.camera_size * 0.75))));
+		else
+			global.monster_loop_gain.gain.value = 0.0;
 
-				// alert any monsters nearby
-				for (var j = 0; j < state.monsters.length; j++)
+		// door text
+		if (graphics.door
+			&& (graphics.door_text.bank_coins !== state.bank_coins || graphics.door_text.door_coins !== state.door_coins))
+			func.refresh_door_text();
+
+		// lights
+		for (var i = 0; i < state.light_models.length; i++)
+		{
+			var light_model = state.light_models[i];
+			var graphic = graphics.light_models[i];
+
+			if (light_model.on)
+			{
+				var glares = graphic.children[0];
+				glares.material.color.copy(con.glare_color);
+				glares.material.color.multiplyScalar(func.flicker(i, 0.05));
+			}
+
+			if (light_model.anim_time < con.light_tip_time)
+			{
+				light_model.anim_time = Math.min(light_model.anim_time + dt, con.light_tip_time);
+				var blend = light_model.anim_time / con.light_tip_time;
+				// rotate the model
+				switch (light_model.anim_dir)
 				{
-					var monster = state.monsters[j];
-					var distance = monster.pos.clone().sub(light_model.pos).length();
-					if (distance < con.monster_scare_radius)
+					case con.directions.right:
+						graphic.rotation.set(0, Math.PI * 0.5 * blend, 0);
+						break;
+					case con.directions.left:
+						graphic.rotation.set(0, Math.PI * -0.5 * blend, 0);
+						break;
+					case con.directions.forward:
+						graphic.rotation.set(Math.PI * -0.5 * blend, 0, 0);
+						break;
+					case con.directions.backward:
+						graphic.rotation.set(Math.PI * 0.5 * blend, 0, 0);
+						break;
+				}
+				if (blend == 1.0)
+				{
+					// kill the light
+					var point_light = graphic.children[1];
+					point_light.color.set(0, 0, 0);
+					var glares = graphic.children[0];
+					graphic.remove(glares);
+
+					// alert any monsters nearby
+					for (var j = 0; j < state.monsters.length; j++)
 					{
-						// run away
-						var path = [];
-						func.astar(monster.pos, func.random_goal(light_model.pos, 30, func.cell_is_far_from_player), path);
-						if (path.length > 0)
+						var monster = state.monsters[j];
+						var distance = monster.pos.clone().sub(light_model.pos).length();
+						if (distance < con.monster_scare_radius)
 						{
-							func.audio(con.audio.whimper, 1.0, 10.0);
-							monster.state = con.monster_states.hide;
-							monster.path = path;
+							// run away
+							var path = [];
+							func.astar(monster.pos, func.random_goal(light_model.pos, 30, func.cell_is_far_from_player), path);
+							if (path.length > 0)
+							{
+								func.audio(con.audio.whimper, 1.0, 10.0);
+								monster.state = con.monster_states.hide;
+								monster.path = path;
+							}
 						}
-					}
-					else if (monster.state === con.monster_states.normal && distance < con.monster_alert_radius)
-					{
-						var path = [];
-						func.astar(monster.pos, func.random_goal(light_model.pos, 2), path);
-						if (path.length > 0)
+						else if (monster.state === con.monster_states.normal && distance < con.monster_alert_radius)
 						{
-							func.audio(con.audio.howl, 1.0, 10.0);
-							monster.state = con.monster_states.alert;
-							monster.path = path;
+							var path = [];
+							func.astar(monster.pos, func.random_goal(light_model.pos, 2), path);
+							if (path.length > 0)
+							{
+								func.audio(con.audio.howl, 1.0, 10.0);
+								monster.state = con.monster_states.alert;
+								monster.path = path;
+							}
 						}
 					}
 				}
 			}
 		}
+
+		// camera
+		if (state.player.alive)
+			graphics.camera_pos_target.copy(state.player.pos);
+
+		graphics.camera_pos.lerp(graphics.camera_pos_target, dt * 10.0);
+		graphics.camera.position.set(graphics.camera_pos.x, graphics.camera_pos.y, 0).add(con.camera_offset);
+
+		// lights
+		for (var i = 0; i < graphics.flicker_lights.length; i++)
+			func.flicker_light(graphics.flicker_lights[i], i);
+		
+		// ui
+		if (graphics.msg_timer > 0)
+		{
+			graphics.msg_timer -= dt;
+			if (state.player.alive && graphics.msg_timer <= 0)
+			{
+				graphics.ui.remove(graphics.msg);
+				graphics.msg = null;
+			}
+		}
+		else if (!state.player.alive &&
+			((global.mouse_down && !global.last_mouse_down) || (global.button_down && !global.last_button_down)))
+		{
+			// player is dead, msg timer is up, and player is clicking
+			// time to transition levels
+			if (state.level === 0) // title
+				func.load_level(1); // start the game
+			else if (state.level === con.level_names.length - 1) // last level
+				func.load_level(0); // start over
+			else
+				func.load_level(state.level); // reload level
+		}
+
+		// player model visibility
+		if (state.player.alive)
+		{
+			if (state.player.damage_timer <= 0)
+				graphics.player.visible = true;
+			else
+				graphics.player.visible = state.player.damage_timer % 0.1 < 0.05;
+		}
+		else
+			graphics.player.visible = false;
+
+		global.last_mouse_down = global.mouse_down;
+		global.last_button_down = global.button_down;
+
+		// overlay
+		if (global.level_timer < con.fade_time)
+		{
+			graphics.overlay.visible = true;
+			graphics.overlay.scale.set(graphics.camera.right - graphics.camera.left, graphics.camera.top - graphics.camera.bottom, 1);
+			graphics.overlay.material.opacity = 1.0 - (global.level_timer / con.fade_time);
+		}
+		else
+			graphics.overlay.visible = false;
 	}
 
-	// camera
-	if (state.player.alive)
-		graphics.camera_pos_target.copy(state.player.pos);
-
-	graphics.camera_pos.lerp(graphics.camera_pos_target, dt * 10.0);
-	graphics.camera.position.set(graphics.camera_pos.x, graphics.camera_pos.y, 0).add(con.camera_offset);
-	func.update_projection();
-
-	// lights
-	for (var i = 0; i < graphics.flicker_lights.length; i++)
-		func.flicker_light(graphics.flicker_lights[i], i);
-	
-	// ui
 	graphics.ui.position.copy(graphics.camera.position).add(con.camera_offset.clone().multiplyScalar(-0.1));
-	if (graphics.msg_timer > 0)
+
+	// update projection matrix
 	{
-		graphics.msg_timer -= dt;
-		if (state.player.alive && graphics.msg_timer <= 0)
+		var min_size = window.innerWidth < window.innerHeight ? window.innerWidth : window.innerHeight;
+		var zoom = con.camera_size / min_size;
+
+		if (graphics.logo)
 		{
-			graphics.ui.remove(graphics.msg);
-			graphics.msg = null;
+			var aspect = graphics.texture.logo.image.width / graphics.texture.logo.image.height;
+			graphics.logo.scale.set(0.01 * aspect * min_size, 0.01 * min_size, 1);
 		}
 	}
-	else if (!state.player.alive &&
-		((global.mouse_down && !global.last_mouse_down) || (global.button_down && !global.last_button_down)))
-	{
-		// player is dead, msg timer is up, and player is clicking
-		// time to transition levels
-		if (state.level === 0) // title
-			func.load_level(1); // start the game
-		else if (state.level === con.level_names.length - 1) // last level
-			func.load_level(0); // start over
-		else
-			func.load_level(state.level); // reload level
-	}
 
-	// player model visibility
-	if (state.player.alive)
-	{
-		if (state.player.damage_timer <= 0)
-			graphics.player.visible = true;
-		else
-			graphics.player.visible = state.player.damage_timer % 0.1 < 0.05;
-	}
-	else
-		graphics.player.visible = false;
-
-	global.last_mouse_down = global.mouse_down;
-	global.last_button_down = global.button_down;
-
-	// overlay
-	if (global.level_timer < con.fade_time)
-	{
-		graphics.overlay.visible = true;
-		graphics.overlay.scale.set(graphics.camera.right - graphics.camera.left, graphics.camera.top - graphics.camera.bottom, 1);
-		graphics.overlay.material.opacity = 1.0 - (global.level_timer / con.fade_time);
-	}
-	else
-		graphics.overlay.visible = false;
+	graphics.camera.left = -0.5 * window.innerWidth * zoom;
+	graphics.camera.right = 0.5 * window.innerWidth * zoom;
+	graphics.camera.top = 0.5 * window.innerHeight * zoom;
+	graphics.camera.bottom = -0.5 * window.innerHeight * zoom;
+	graphics.camera.updateProjectionMatrix();
 
 	// render
 	graphics.renderer.render(graphics.scene, graphics.camera);
@@ -1853,24 +1881,6 @@ func.update = function()
 func.on_resize = function()
 {
 	graphics.renderer.setSize(window.innerWidth, window.innerHeight);
-};
-
-func.update_projection = function()
-{
-	var min_size = window.innerWidth < window.innerHeight ? window.innerWidth : window.innerHeight;
-	var zoom = con.camera_size / min_size;
-
-	if (graphics.logo)
-	{
-		var aspect = graphics.texture.logo.image.width / graphics.texture.logo.image.height;
-		graphics.logo.scale.set(0.01 * aspect * min_size, 0.01 * min_size, 1);
-	}
-
-	graphics.camera.left = -0.5 * window.innerWidth * zoom;
-	graphics.camera.right = 0.5 * window.innerWidth * zoom;
-	graphics.camera.top = 0.5 * window.innerHeight * zoom;
-	graphics.camera.bottom = -0.5 * window.innerHeight * zoom;
-	graphics.camera.updateProjectionMatrix();
 };
 
 $(document).ready(function()
