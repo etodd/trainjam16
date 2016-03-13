@@ -4,6 +4,8 @@ Created by [Evan Todd](http://etodd.io) for [Train Jam](http://trainjam.com) 201
 
 Written with [Three.js](http://threejs.org/).
 
+Play it [here](http://et1337.itch.io/haunted-heist).
+
 ## Sounds
 
 - http://freesound.org/people/bone666138/sounds/198877/
