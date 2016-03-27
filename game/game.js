@@ -540,8 +540,8 @@ var con =
 		whimper: [ 'snd/whimper.wav', ],
 		door_close: [ 'snd/door_close.wav', ],
 		monster_loop: [ 'snd/monster_loop.wav', ],
-		menu_music: [ 'snd/menu_music.mp3' ],
-		end_music: [ 'snd/end_music.mp3' ],
+		menu_music: [ 'snd/menu_music.ogg' ],
+		end_music: [ 'snd/end_music.ogg' ],
 		attack:
 		[
 			'snd/attack0.wav',
